@@ -1,4 +1,4 @@
-import { isCollectionUrl, scanPage } from "./scan.js";
+import { collectionProfile, isCollectionUrl, scanPage } from "./scan.js";
 import { uncollect } from "./uncollect.js";
 import { addSources, isDue, localDay, source, updateItem } from "./model.js";
 
@@ -122,10 +122,9 @@ async function changeItems(input) {
 async function beginScan(input) {
   const tab = await chrome.tabs.get(input.tabId);
   if (!tab.url || !isCollectionUrl(tab.url)) throw new Error("请先打开「我的主页 → 收藏 → 笔记」。");
-  const scanTab = await chrome.tabs.create({ url: tab.url, windowId: tab.windowId, active: true });
   return run(async () => {
     const scan = {
-      id: crypto.randomUUID(), tabId: scanTab.id, url: tab.url, started: new Date().toISOString(),
+      id: crypto.randomUUID(), tabId: tab.id, url: tab.url, started: new Date().toISOString(),
       expected: null, lastTotal: null, rows: [], unique: 0, stop: ""
     };
     await chrome.storage.local.set({ scan });
@@ -137,21 +136,31 @@ async function runScanStep() {
   const { scan } = await chrome.storage.local.get("scan");
   if (!scan) throw new Error("请从头开始一次扫描。");
   const offset = scan.rows.length;
+  let tab;
   let result;
   try {
-    const tab = await chrome.tabs.get(scan.tabId);
-    if (tab.status === "loading" && (!tab.url || tab.url === "about:blank" || tab.url === scan.url)) {
-      return { stop: "loading" };
-    }
-    if (tab.url !== scan.url) throw new Error("Collection tab closed or changed");
-    const [frame] = await chrome.scripting.executeScript({
-      target: { tabId: scan.tabId }, world: "MAIN", func: scanPage,
-      args: [scan.url, offset, scan.rows[0]?.id, scan.rows.at(-1)?.id]
-    });
-    result = frame?.result || { stop: "unavailable" };
+    tab = await chrome.tabs.get(scan.tabId);
   } catch {
-    result = { stop: "tab-changed" };
+    result = { stop: "tab-closed" };
   }
+  if (tab?.status === "loading") return { stop: "loading" };
+  if (tab && collectionProfile(tab.url, true) !== collectionProfile(scan.url)) {
+    const path = tab.url ? new URL(tab.url).pathname : "";
+    result = { stop: /login|captcha|verify/i.test(path) ? "needs-site-access" : "not-collection" };
+  }
+  if (!result) {
+    try {
+      const [frame] = await chrome.scripting.executeScript({
+        target: { tabId: scan.tabId }, world: "MAIN", func: scanPage,
+        args: [scan.url, offset, scan.rows[0]?.id ?? null, scan.rows.at(-1)?.id ?? null]
+      });
+      result = frame?.result || { stop: "unavailable" };
+    } catch (error) {
+      if (/frame.*(?:removed|navigat)|navigat.*frame/i.test(error.message)) return { stop: "loading" };
+      result = { stop: /permission|access/i.test(error.message) ? "site-permission" : "script-error" };
+    }
+  }
+  if (result.stop === "catching-up") return { stop: "catching-up", loaded: result.loaded };
 
   return run(async () => {
     const { scan: current, items = [], excluded = [] } = await chrome.storage.local.get(["scan", "items", "excluded"]);

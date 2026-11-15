@@ -13,6 +13,7 @@ let excluded = [];
 let scanning = false;
 let scanBusy = false;
 let listPage = 0;
+let replayLoaded = null;
 const pageSize = 60;
 const removing = new Set();
 
@@ -96,7 +97,12 @@ const scanStops = {
   "waiting": "小红书还在加载，请稍后继续。",
   "request-stopped": "小红书这次加载失败或超时。",
   "no-progress": "小红书没有返回新的一页，扫描已暂停。",
-  "tab-changed": "扫描标签页已关闭或切换，请从头重扫。",
+  "tab-changed": "扫描页面已跳转到其他地址。请回到原收藏页再继续。",
+  "tab-closed": "扫描使用的标签页已关闭，请在收藏页从头重扫。",
+  "not-collection": "扫描页当前不是原来的收藏笔记页。请切回「收藏 → 笔记」，再继续扫描。",
+  "site-permission": "Chrome 拦截了读取。请检查拾读对小红书的网站访问权限。",
+  "needs-site-access": "小红书显示登录或验证页面。请按网站提示处理，再回收藏页继续。",
+  "script-error": "页面打开了，但 Chrome 未能运行收藏扫描。请刷新收藏页后重试。",
   "list-changed": "小红书列表顺序已变化，请从头重扫以重新核对。",
   "restarted": "扫描已在另一个窗口重开。"
 };
@@ -107,16 +113,19 @@ function drawScan() {
   $("#scan-resume").disabled = scanBusy;
   $("#scan-pause").hidden = !scanning;
   $("#scan-export").hidden = !scan?.rows.length;
-  resume.hidden = dashboard || !scan || scanning || ["site-end", "tab-changed", "list-changed"].includes(scan.stop);
+  resume.hidden = dashboard || !scan || scanning || ["site-end", "tab-closed", "list-changed"].includes(scan.stop);
   const progress = $("#scan-progress");
   progress.hidden = !scan?.expected;
   progress.max = scan?.expected || 1;
   progress.value = Math.min(scan?.unique || 0, progress.max);
   if (!scan) return;
   const expected = scan.expected == null ? "网站总数暂未识别" : `小红书显示 ${scan.expected} 条`;
-  const difference = scan.expected == null ? "" : ` · 差 ${Math.max(0, scan.expected - scan.unique)} 条`;
+  const gap = scan.expected - scan.unique;
+  const difference = scan.expected == null ? "" : gap < 0 ? ` · 多 ${-gap} 条` : ` · 差 ${gap} 条`;
   const clean = scan.expected === scan.lastTotal && scan.unique === scan.expected && scan.rows.length === scan.unique;
-  const status = scanning ? "正在按小红书列表顺序扫描…" : scan.stop === "site-end"
+  const status = scanning
+    ? (replayLoaded == null ? "正在按小红书列表顺序扫描…" : `正在恢复页面进度（已重新加载 ${replayLoaded} / ${scan.rows.length} 行）…`)
+    : scan.stop === "site-end"
     ? (clean ? "已到末页，去重后的数量与网站总数一致。" : "网站已返回末页，仍有数量差异或总数待核对。")
     : (scanStops[scan.stop] || "已暂停，可以继续。");
   const extra = scan.lastTotal !== scan.expected ? `
@@ -129,6 +138,7 @@ ${status}${extra}`;
 async function runScan(start) {
   if (scanBusy) return;
   scanBusy = scanning = true;
+  replayLoaded = null;
   drawScan();
   try {
     if (start) {
@@ -138,8 +148,10 @@ async function runScan(start) {
     }
     let loadingChecks = 0;
     while (scanning) {
-      const { stop } = await commit({ op: "scan-step" });
-      if (stop && stop !== "loading") break;
+      const { stop, loaded } = await commit({ op: "scan-step" });
+      replayLoaded = stop === "catching-up" ? loaded : null;
+      drawScan();
+      if (stop && stop !== "loading" && stop !== "catching-up") break;
       loadingChecks = stop === "loading" ? loadingChecks + 1 : 0;
       if (loadingChecks > 40) throw new Error("收藏页仍在加载。请检查扫描标签页，再点继续扫描。");
       await new Promise(resolve => setTimeout(resolve, stop === "loading" ? 450 : 650));

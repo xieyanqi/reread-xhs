@@ -112,15 +112,15 @@ export async function readFavoriteControl(id, hosts, notePattern, click) {
     const { control, state } = controlAndState();
     stable = state && state === lastState ? stable + 1 : 0;
     lastState = state;
-    if (stable >= 3) {
+    if (stable >= 2) {
       if (state !== "collected" || !click) return state;
       // Click the interactive element used by the site's own note UI exactly once.
       const target = control.matches('button, [role=button]') ? control :
         control.querySelector('button, [role=button], svg') || control;
       target.click ? target.click() : target.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
       let confirmed = false;
-      for (let tick = 0; tick < 20; tick++) {
-        await sleep(350);
+      for (let tick = 0; tick < 18; tick++) {
+        await sleep(200);
         if (!correctNote()) return "unavailable";
         const dialogs = Array.from(document.querySelectorAll('[role="dialog"], .reds-modal, .el-dialog')).filter(visible);
         for (const dialog of dialogs) {
@@ -135,13 +135,13 @@ export async function readFavoriteControl(id, hosts, notePattern, click) {
           }
         }
         if (controlAndState().state === "not-collected") {
-          await sleep(850);
+          await sleep(200);
           return "clicked";
         }
       }
       return "clicked";
     }
-    await sleep(300);
+    await sleep(stable ? 140 : 250);
   }
   return "unknown";
 }
