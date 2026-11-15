@@ -1,3 +1,6 @@
+export const xhsHosts = ["xiaohongshu.com", "www.xiaohongshu.com", "m.xiaohongshu.com"];
+export const xhsNotePath = /^\/(?:explore|discovery\/item|search_result|user\/profile\/[\w-]+)\/([a-f\d]{24})\/?$/i;
+
 export const kinds = { inbox: "待复读", note: "笔记", action: "行动", archived: "已归档" };
 export const outcomes = { progress: "有进展", blocked: "卡住了", complete: "已完成" };
 
@@ -18,9 +21,8 @@ export function source(raw) {
     const url = new URL(raw);
     if (url.hostname === "xhslink.com" && url.protocol === "http:") url.protocol = "https:";
     if (url.protocol !== "https:" || url.username || url.password || url.port) return null;
-    const hosts = ["xiaohongshu.com", "www.xiaohongshu.com", "m.xiaohongshu.com"];
-    const match = url.pathname.match(/^\/(?:explore|discovery\/item|user\/profile\/[\w-]+)\/([a-f\d]{24})\/?$/i);
-    if (hosts.includes(url.hostname) && match) {
+    const match = url.pathname.match(xhsNotePath);
+    if (xhsHosts.includes(url.hostname) && match) {
       url.hash = "";
       return { id: match[1].toLowerCase(), url: url.href };
     }

@@ -1,4 +1,5 @@
-import { dayAfter, isDue, kinds, localDay, outcomes, source } from "./model.js";
+import { readPage } from "./capture.js";
+import { dayAfter, isDue, kinds, localDay, outcomes, xhsHosts, xhsNotePath } from "./model.js";
 
 const $ = selector => document.querySelector(selector);
 const editor = $("#editor");
@@ -17,63 +18,57 @@ async function commit(input) {
   return result;
 }
 
-async function importEntries(entries) {
+async function importEntries(entries, pageResult) {
   const { added, matched } = await commit({ op: "add", entries });
   if (!matched) {
-    showNotice("未找到小红书帖子链接。可以打开单篇原帖，或粘贴分享链接。");
+    showNotice(pageResult?.profile
+      ? "识别到 0 条帖子。请确认已选中「收藏」且看到了帖子卡片，再点导入。"
+      : "未识别到小红书帖子链接。可以打开单篇原帖，或粘贴分享链接。");
     return false;
   }
   view = "inbox";
   render();
-  showNotice(added ? `已加入 ${added} 条${matched > added ? `，跳过 ${matched - added} 条重复链接` : ""}。` : "这些链接已经收录了。");
+  showNotice(`识别到 ${matched} 条，新增 ${added} 条${matched > added ? `，已收录 ${matched - added} 条` : ""}。`);
   return true;
-}
-
-function readPage() {
-  const pageTitle = document.querySelector('meta[property="og:title"]')?.content
-    || document.querySelector("#detail-title")?.textContent
-    || document.title;
-  const links = Array.from(document.querySelectorAll("a[href]"), link => {
-    const card = link.closest("section.note-item, .note-item");
-    const title = card?.querySelector(".footer .title, .title")?.textContent
-      || link.querySelector("img[alt]")?.alt
-      || link.getAttribute("aria-label")
-      || link.textContent;
-    return { url: link.href, title };
-  });
-  return { title: pageTitle.replace(/\s*[-–|｜]\s*小红书\s*$/, "").trim(), links };
 }
 
 $("#capture").addEventListener("click", async () => {
   const button = $("#capture");
   button.disabled = true;
+  showNotice("正在读取当前页面…");
+  const onFailure = "读取失败。请在当前小红书标签页点击工具栏里的拾读图标打开侧栏，再点导入。";
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.url) {
-      showNotice("请先切到小红书，再点击工具栏的拾读图标，或粘贴链接。");
+      showNotice(onFailure);
       return;
     }
     const url = new URL(tab.url);
-    if (!["xiaohongshu.com", "www.xiaohongshu.com", "m.xiaohongshu.com"].includes(url.hostname)) {
+    if (!xhsHosts.includes(url.hostname)) {
       showNotice("请先打开小红书的收藏页或一篇帖子。");
       return;
     }
-    const [{ result }] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: readPage });
-    const entries = source(tab.url) ? [{ url: tab.url, title: result.title }] : result.links;
-    const unique = new Map();
-    for (const entry of entries) {
-      const parsed = source(entry.url);
-      if (!parsed) continue;
-      const previous = unique.get(parsed.id);
-      const hasToken = new URL(entry.url).searchParams.has("xsec_token");
-      unique.set(parsed.id, {
-        url: !previous || hasToken ? entry.url : previous.url,
-        title: previous?.title || entry.title
+    let result;
+    try {
+      [{ result }] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: "MAIN",
+        func: readPage,
+        args: [items.map(item => item.id), xhsHosts, xhsNotePath.source]
       });
+    } catch (error) {
+      console.warn("Could not read the active tab", error);
+      showNotice(onFailure);
+      return;
     }
-    await importEntries([...unique.values()]);
-  } catch {
-    showNotice("页面读取失败。请在小红书标签页重新点击工具栏图标，或粘贴分享链接。");
+    if (!result) {
+      showNotice("页面已切换或正在加载。请等到帖子卡片出现后再试。");
+      return;
+    }
+    await importEntries(result.entries, result);
+  } catch (error) {
+    console.warn("Could not import entries", error);
+    showNotice("保存失败，请重试。");
   } finally {
     button.disabled = false;
   }

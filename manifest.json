@@ -3,7 +3,7 @@
   "name": "拾读 · 小红书收藏复读",
   "short_name": "拾读",
   "description": "把小红书收藏转成自己的笔记和行动，到期复盘。",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "minimum_chrome_version": "116",
   "permissions": ["activeTab", "scripting", "sidePanel", "storage", "alarms", "notifications"],
   "background": {"service_worker": "worker.js", "type": "module"},
