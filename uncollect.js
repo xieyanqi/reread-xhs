@@ -36,13 +36,30 @@ async function loadTab(browser, tabId, reload = false) {
   }
 }
 
+async function findOpenNote(browser, noteId) {
+  const [[active], candidates] = await Promise.all([
+    browser.tabs.query({ active: true, lastFocusedWindow: true }),
+    browser.tabs.query({ url: xhsHosts.map(host => `https://${host}/*`) })
+  ]);
+  const matching = candidates.filter(tab => {
+    if (tab.id == null || Boolean(tab.incognito) !== Boolean(active?.incognito)) return false;
+    const url = tab.pendingUrl || tab.url;
+    return source(url)?.id === noteId && new URL(url).searchParams.get("source") !== "404";
+  });
+  return matching.find(tab => tab.id === active?.id) ||
+    matching.find(tab => tab.windowId === active?.windowId) ||
+    matching[0];
+}
+
 export async function uncollect(browser, item) {
   const original = source(item?.url);
   if (!original || original.id !== item.id || original.id.startsWith("share:")) {
     throw new Error("这条记录缺少可验证的原帖地址。请从收藏页重新导入它。");
   }
 
-  const tab = await browser.tabs.create({ url: original.url, active: true });
+  const existing = await findOpenNote(browser, item.id);
+  const tab = existing || await browser.tabs.create({ url: original.url, active: true });
+  if (existing?.discarded) await browser.tabs.update(tab.id, { active: true });
   let verified = false;
   const check = async click => {
     const [frame] = await browser.scripting.executeScript({
@@ -55,7 +72,11 @@ export async function uncollect(browser, item) {
   };
   try {
     await loadTab(browser, tab.id);
-    const before = await check(true);
+    let before = await check(true);
+    if (existing && before === "not-collected") {
+      await loadTab(browser, tab.id, true);
+      before = await check(true);
+    }
     if (before === "not-collected") {
       verified = true;
       return "already-removed";
@@ -69,7 +90,7 @@ export async function uncollect(browser, item) {
     verified = true;
     return "removed";
   } finally {
-    if (verified) await browser.tabs.remove(tab.id).catch(() => {});
+    if (verified && !existing) await browser.tabs.remove(tab.id).catch(() => {});
   }
 }
 
