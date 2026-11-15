@@ -1,6 +1,41 @@
+import { xhsHosts, xhsNotePath } from "./model.js";
+
+const siteAccessHelp = "请切到小红书标签页。若已在收藏页，请右键拾读图标，在「可以读取和更改网站数据」里允许访问小红书，然后刷新网页。";
+
+export async function captureActiveTab(browser, previousIds) {
+  const query = { active: true };
+  let [tab] = await browser.tabs.query({ ...query, currentWindow: true });
+  if (!tab) [tab] = await browser.tabs.query({ ...query, lastFocusedWindow: true });
+  if (tab?.id == null || !tab.url) throw new Error(siteAccessHelp);
+  const url = new URL(tab.url);
+  if (url.protocol !== "https:" || !xhsHosts.includes(url.hostname)) {
+    throw new Error("请打开网页版小红书的收藏页或一篇帖子，再点导入。");
+  }
+
+  for (const world of ["MAIN", "ISOLATED"]) {
+    try {
+      const [frame] = await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        world,
+        func: readPage,
+        args: [previousIds, xhsHosts, xhsNotePath.source, url.origin, world === "MAIN"]
+      });
+      if (Array.isArray(frame?.result?.entries)) return frame.result;
+    } catch (error) {
+      const message = error.message;
+      if (/cannot access|missing host permission|not allowed|blocked by/i.test(message)) {
+        throw new Error(siteAccessHelp);
+      }
+      if (/no tab|frame.*remov|no frame|navigat/i.test(message)) break;
+    }
+  }
+  throw new Error("页面在读取时切换，或读取程序没有返回结果。请刷新收藏页，等帖子卡片出现后再试。");
+}
+
 // Chrome serializes this function when injecting it into the active tab.
-export function readPage(previousIds, hosts, notePattern) {
+export function readPage(previousIds, hosts, notePattern, expectedOrigin, readCollectionState) {
   const page = new URL(location.href);
+  if (page.origin !== expectedOrigin) return null;
   const notePath = new RegExp(notePattern, "i");
   const profile = /^\/user\/profile\/[\w-]+\/?$/.test(page.pathname);
   const clean = value => typeof value === "string" ? value.trim().slice(0, 120) : "";
@@ -83,7 +118,7 @@ export function readPage(previousIds, hosts, notePattern) {
         card.querySelector(".footer .title, .title")?.textContent || card.getAttribute("data-title")
       );
     }
-    if (!fav) return;
+    if (!fav || !readCollectionState) return;
     // The page can have loaded collection results before rendering them as cards.
     const user = window.__INITIAL_STATE__?.user;
     const unwrap = value => value?.value ?? value?._value ?? value?._rawValue ?? value;
@@ -105,7 +140,7 @@ export function readPage(previousIds, hosts, notePattern) {
   return (async () => {
     for (const delay of [0, 250, 500, 850]) {
       if (delay) await new Promise(resolve => setTimeout(resolve, delay));
-      if (location.href !== page.href) break;
+      if (location.href !== page.href) return null;
       collect();
       if ([...found.keys()].some(id => !known.has(id))) break;
     }

@@ -1,5 +1,5 @@
-import { readPage } from "./capture.js";
-import { dayAfter, isDue, kinds, localDay, outcomes, xhsHosts, xhsNotePath } from "./model.js";
+import { captureActiveTab } from "./capture.js";
+import { dayAfter, isDue, kinds, localDay, outcomes } from "./model.js";
 
 const $ = selector => document.querySelector(selector);
 const editor = $("#editor");
@@ -36,33 +36,12 @@ $("#capture").addEventListener("click", async () => {
   const button = $("#capture");
   button.disabled = true;
   showNotice("正在读取当前页面…");
-  const onFailure = "读取失败。请在当前小红书标签页点击工具栏里的拾读图标打开侧栏，再点导入。";
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.url) {
-      showNotice(onFailure);
-      return;
-    }
-    const url = new URL(tab.url);
-    if (!xhsHosts.includes(url.hostname)) {
-      showNotice("请先打开小红书的收藏页或一篇帖子。");
-      return;
-    }
     let result;
     try {
-      [{ result }] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        world: "MAIN",
-        func: readPage,
-        args: [items.map(item => item.id), xhsHosts, xhsNotePath.source]
-      });
+      result = await captureActiveTab(chrome, items.map(item => item.id));
     } catch (error) {
-      console.warn("Could not read the active tab", error);
-      showNotice(onFailure);
-      return;
-    }
-    if (!result) {
-      showNotice("页面已切换或正在加载。请等到帖子卡片出现后再试。");
+      showNotice(error.message);
       return;
     }
     await importEntries(result.entries, result);
