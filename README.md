@@ -1,6 +1,8 @@
 # 拾读 · 小红书收藏复读
 
-每个发布版本都有独立的 Git 标签。遇到的问题、对应改动和验证情况见[更新日志](CHANGELOG.md)。
+版本源码 [v0.1.0](https://github.com/xieyanqi/reread-xhs/tree/a4b766911e6bbb9e271673650c1357017c02802b) · [v0.1.1](https://github.com/xieyanqi/reread-xhs/tree/7f3802a892efbfebb47c31714c9bc385b9f81079) · [v0.1.2](https://github.com/xieyanqi/reread-xhs/tree/1f96c12ba3d6920188aa92a78c77766d48889401) · [v0.1.3](https://github.com/xieyanqi/reread-xhs/tree/e522e127a142994fde680095202fd1ff9e6c8401)
+
+每次改动和验证情况见[更新日志](CHANGELOG.md)。
 
 ## 安装
 
