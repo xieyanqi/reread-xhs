@@ -66,3 +66,11 @@ input, select, textarea { display: block; width: 100%; padding: 8px; border: 1px
 textarea { resize: vertical; }
 .error { margin-top: 9px; font-size: 13px; color: var(--red); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 15px; }
+
+.scan { margin-top: 15px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; }
+.scan h2 { margin: 0; font-size: 14px; }
+.scan .notice { margin-bottom: 0; white-space: pre-line; }
+.scan progress { width: 100%; margin-top: 8px; accent-color: var(--red); }
+#item-search { margin-bottom: 10px; }
+#pager { margin: 0 0 12px; align-items: center; justify-content: space-between; }
+#page-position { font-size: 12px; color: var(--muted); }

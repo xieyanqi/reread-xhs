@@ -1,3 +1,4 @@
+import { isCollectionUrl, scanPage } from "./scan.js";
 import { uncollect } from "./uncollect.js";
 import { addSources, isDue, localDay, source, updateItem } from "./model.js";
 
@@ -5,6 +6,7 @@ const alarmName = "reread-check";
 const noticeId = "reread-due";
 let queue = Promise.resolve();
 const removals = new Map();
+let scanStep;
 
 function run(task) {
   const operation = queue.then(task);
@@ -117,9 +119,83 @@ async function changeItems(input) {
   return result;
 }
 
+async function beginScan(input) {
+  const tab = await chrome.tabs.get(input.tabId);
+  if (!tab.url || !isCollectionUrl(tab.url)) throw new Error("请先打开「我的主页 → 收藏 → 笔记」。");
+  const scanTab = await chrome.tabs.create({ url: tab.url, windowId: tab.windowId, active: true });
+  return run(async () => {
+    const scan = {
+      id: crypto.randomUUID(), tabId: scanTab.id, url: tab.url, started: new Date().toISOString(),
+      expected: null, lastTotal: null, rows: [], unique: 0, stop: ""
+    };
+    await chrome.storage.local.set({ scan });
+    return { stop: "" };
+  });
+}
+
+async function runScanStep() {
+  const { scan } = await chrome.storage.local.get("scan");
+  if (!scan) throw new Error("请从头开始一次扫描。");
+  const offset = scan.rows.length;
+  let result;
+  try {
+    const tab = await chrome.tabs.get(scan.tabId);
+    if (tab.status === "loading" && (!tab.url || tab.url === "about:blank" || tab.url === scan.url)) {
+      return { stop: "loading" };
+    }
+    if (tab.url !== scan.url) throw new Error("Collection tab closed or changed");
+    const [frame] = await chrome.scripting.executeScript({
+      target: { tabId: scan.tabId }, world: "MAIN", func: scanPage,
+      args: [scan.url, offset, scan.rows[0]?.id, scan.rows.at(-1)?.id]
+    });
+    result = frame?.result || { stop: "unavailable" };
+  } catch {
+    result = { stop: "tab-changed" };
+  }
+
+  return run(async () => {
+    const { scan: current, items = [], excluded = [] } = await chrome.storage.local.get(["scan", "items", "excluded"]);
+    if (current?.id !== scan.id) return { stop: "restarted" };
+    if (Number.isSafeInteger(result.total) && result.total >= 0) {
+      current.expected ??= result.total;
+      current.lastTotal = result.total;
+    }
+    const blocked = new Set(excluded);
+    const seen = new Set(current.rows.map(row => row.id));
+    const entries = [];
+    for (const row of result.rows || []) {
+      const parsed = source(row.url);
+      const valid = parsed && parsed.id === row.id;
+      const duplicate = valid && seen.has(row.id);
+      if (valid && !duplicate) {
+        seen.add(row.id);
+        current.unique++;
+        if (!blocked.has(row.id)) entries.push(row);
+      }
+      current.rows.push({ id: valid ? row.id : "", title: row.title, duplicate: Boolean(duplicate) });
+    }
+    if (entries.length) addSources(items, entries);
+    current.stop = result.stop;
+    const values = { scan: current };
+    if (entries.length) values.items = items;
+    await chrome.storage.local.set(values);
+    return { stop: result.stop };
+  });
+}
+
+function advanceScan() {
+  scanStep ??= runScanStep().finally(() => { scanStep = null; });
+  return scanStep;
+}
+
 chrome.runtime.onMessage.addListener((input, sender, reply) => {
-  if (sender.id !== chrome.runtime.id || !["add", "convert", "checkin", "uncollect"].includes(input?.op)) return;
-  const operation = input.op === "uncollect" ? removeFromCollection(input.id) : run(() => changeItems(input));
+  if (sender.id !== chrome.runtime.id || !["add", "convert", "checkin", "uncollect", "scan-start", "scan-step"].includes(input?.op)) return;
+  const operations = {
+    uncollect: () => removeFromCollection(input.id),
+    "scan-start": () => beginScan(input),
+    "scan-step": advanceScan
+  };
+  const operation = operations[input.op]?.() ?? run(() => changeItems(input));
   operation.then(result => reply({ ok: true, ...result }), error => reply({ ok: false, error: error.message }));
   return true;
 });

@@ -25,11 +25,28 @@
       </details>
       <p id="notice" class="notice" role="status"></p>
     </section>
+    <section class="scan" aria-labelledby="scan-title">
+      <h2 id="scan-title">收藏对账</h2>
+      <div class="card-actions">
+        <button id="scan-start" type="button">从头扫描收藏</button>
+        <button id="scan-resume" type="button" hidden>继续扫描</button>
+        <button id="scan-pause" type="button" hidden>暂停扫描</button>
+        <button id="scan-export" type="button" hidden>导出对账 CSV</button>
+      </div>
+      <p id="scan-summary" class="notice" role="status"></p>
+      <progress id="scan-progress" hidden></progress>
+    </section>
     <nav aria-label="收藏列表">
       <button type="button" data-view="inbox">待复读 <span></span></button>
       <button type="button" data-view="due">待回看 <span></span></button>
       <button type="button" data-view="all">全部 <span></span></button>
     </nav>
+    <input id="item-search" type="search" aria-label="搜索收藏" placeholder="搜索标题、笔记或帖子 ID">
+    <div class="card-actions" id="pager" hidden>
+      <button id="previous-page" type="button">上一页</button>
+      <span id="page-position" aria-live="polite"></span>
+      <button id="next-page" type="button">下一页</button>
+    </div>
     <section id="list" aria-label="收藏条目"></section>
     <footer><button id="export" class="quiet" type="button">导出 Markdown</button><span>保存在当前浏览器</span></footer>
   </main>
