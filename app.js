@@ -1,5 +1,4 @@
 import { csvCell } from "./scan.js";
-import { captureActiveTab } from "./capture.js";
 import { dayAfter, isDue, kinds, localDay, outcomes, source } from "./model.js";
 
 const $ = selector => document.querySelector(selector);
@@ -27,54 +26,18 @@ async function commit(input) {
   return result;
 }
 
-async function importEntries(entries, pageResult) {
-  if (pageResult?.reason === "choose-collection") {
-    showNotice("批量导入请打开「我的主页 → 收藏 → 笔记」。");
-    return false;
-  }
-  if (pageResult?.reason === "unavailable-collection") {
-    showNotice("未能确认当前是收藏笔记列表。请刷新「收藏 → 笔记」，等卡片出现后再点导入。");
-    return false;
-  }
-  if (!entries.length) {
-    showNotice(pageResult?.collection
-      ? "在收藏列表中识别到 0 条笔记。"
-      : "未识别到小红书帖子链接。可以打开单篇原帖，或粘贴分享链接。");
-    return false;
-  }
-  const { added, matched, skipped } = await commit({
-    op: "add", entries, collection: Boolean(pageResult?.collection)
-  });
-  if (!matched && !skipped) {
+async function importEntries(entries) {
+  const { added, matched } = await commit({ op: "add", entries });
+  if (!matched) {
     showNotice("未识别到小红书帖子链接。");
     return false;
   }
   view = "inbox";
+  listPage = 0;
   render();
-  showNotice(`识别到 ${matched + skipped} 条，新增 ${added} 条${matched > added ? `，已收录 ${matched - added} 条` : ""}${skipped ? `，跳过已移出的 ${skipped} 条` : ""}。`);
+  showNotice(`识别到 ${matched} 条，新增 ${added} 条${matched > added ? `，已收录 ${matched - added} 条` : ""}。`);
   return true;
 }
-
-$("#capture").addEventListener("click", async () => {
-  const button = $("#capture");
-  button.disabled = true;
-  showNotice("正在读取当前页面…");
-  try {
-    let result;
-    try {
-      result = await captureActiveTab(chrome, items.map(item => item.id));
-    } catch (error) {
-      showNotice(error.message);
-      return;
-    }
-    await importEntries(result.entries, result);
-  } catch (error) {
-    console.warn("Could not import entries", error);
-    showNotice("保存失败，请重试。");
-  } finally {
-    button.disabled = false;
-  }
-});
 
 $("#paste-form").addEventListener("submit", async event => {
   event.preventDefault();
@@ -226,7 +189,7 @@ function render() {
   const title = document.createElement("h2");
   const hint = document.createElement("p");
   const copy = {
-    inbox: ["待复读列表是空的", "打开小红书收藏页，滚动加载想导入的帖子，再点击导入。"],
+    inbox: ["待复读列表是空的", "打开小红书收藏页，点击「从头扫描收藏」。"],
     due: ["今天没有到期条目", "用「全部」查看已经安排的笔记和行动，也可以提前复盘。"],
     all: ["还没有收录的帖子", "导入一篇最近收藏的帖子，试着写下它能帮你做什么。"]
   };
@@ -234,7 +197,7 @@ function render() {
   if (search) {
     title.textContent = "没有匹配的收藏";
     hint.textContent = "可以换一个关键词，或切到「全部」搜索。";
-  } else if (dashboard && view === "inbox") hint.textContent = "在小红书标签页打开拾读，或在这里粘贴分享链接。";
+  } else if (dashboard && view === "inbox") hint.textContent = "在小红书收藏页打开拾读并开始扫描，或在这里粘贴分享链接。";
   empty.append(title, hint);
   list.replaceChildren(empty);
 }
@@ -417,8 +380,6 @@ $("#open-workspace").addEventListener("click", () => {
     .catch(error => showNotice(error.message));
 });
 $("#open-workspace").hidden = dashboard;
-$("#capture").hidden = dashboard;
-
 $("#scan-start").hidden = dashboard;
 
 chrome.storage.onChanged.addListener((changes, area) => {

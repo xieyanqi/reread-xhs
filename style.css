@@ -18,10 +18,9 @@ h1, h2, p { margin: 0; }
 h1 { font-size: 27px; font-weight: 740; letter-spacing: .06em; line-height: 1.13; }
 .masthead p { font-size: 12px; color: var(--muted); margin-top: 4px; }
 .workspace { margin-left: auto; }
-.capture { margin: 16px 0 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
-.capture details[open] { flex-basis: 100%; }
-.capture details form { padding: 10px 0 0; }
-.capture details button { margin-top: 8px; }
+.paste-links { margin-top: 10px; }
+.paste-links form { padding-top: 4px; }
+.paste-links button { margin-top: 8px; }
 .notice { flex-basis: 100%; color: var(--muted); font-size: 13px; line-height: 1.55; }
 .notice:empty, .error:empty { display: none; }
 button, input, select, textarea { font: inherit; }

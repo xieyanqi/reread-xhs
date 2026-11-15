@@ -13,9 +13,17 @@
       <div><h1>拾读</h1><p>小红书收藏复读</p></div>
       <button id="open-workspace" class="quiet workspace" type="button">独立窗口 ↗</button>
     </header>
-    <section class="capture" aria-label="导入收藏">
-      <button class="primary" id="capture" type="button">导入当前小红书页面</button>
-      <details>
+    <section class="scan" aria-labelledby="scan-title">
+      <h2 id="scan-title">收藏对账</h2>
+      <div class="card-actions">
+        <button id="scan-start" class="primary" type="button">从头扫描收藏</button>
+        <button id="scan-resume" type="button" hidden>继续扫描</button>
+        <button id="scan-pause" type="button" hidden>暂停扫描</button>
+        <button id="scan-export" type="button" hidden>导出对账 CSV</button>
+      </div>
+      <p id="scan-summary" class="notice" role="status"></p>
+      <progress id="scan-progress" hidden></progress>
+      <details class="paste-links">
         <summary>粘贴链接</summary>
         <form id="paste-form">
           <label for="links">小红书帖子链接或分享文本，可粘贴多条</label>
@@ -24,17 +32,6 @@
         </form>
       </details>
       <p id="notice" class="notice" role="status"></p>
-    </section>
-    <section class="scan" aria-labelledby="scan-title">
-      <h2 id="scan-title">收藏对账</h2>
-      <div class="card-actions">
-        <button id="scan-start" type="button">从头扫描收藏</button>
-        <button id="scan-resume" type="button" hidden>继续扫描</button>
-        <button id="scan-pause" type="button" hidden>暂停扫描</button>
-        <button id="scan-export" type="button" hidden>导出对账 CSV</button>
-      </div>
-      <p id="scan-summary" class="notice" role="status"></p>
-      <progress id="scan-progress" hidden></progress>
     </section>
     <nav aria-label="收藏列表">
       <button type="button" data-view="inbox">待复读 <span></span></button>
