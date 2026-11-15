@@ -73,3 +73,5 @@ textarea { resize: vertical; }
 #item-search { margin-bottom: 10px; }
 #pager { margin: 0 0 12px; align-items: center; justify-content: space-between; }
 #page-position { font-size: 12px; color: var(--muted); }
+
+#open-cleanup { margin-bottom: 9px; }

@@ -3,7 +3,7 @@
   "name": "拾读 · 小红书收藏复读",
   "short_name": "拾读",
   "description": "把小红书收藏转成自己的笔记和行动，到期复盘。",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "minimum_chrome_version": "116",
   "permissions": ["scripting", "sidePanel", "storage", "alarms", "notifications"],
   "host_permissions": ["https://xiaohongshu.com/*", "https://www.xiaohongshu.com/*", "https://m.xiaohongshu.com/*"],

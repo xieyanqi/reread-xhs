@@ -1,5 +1,6 @@
+import { protectedItem, stages } from "./cleanup-model.js";
 import { collectionProfile, isCollectionUrl, scanPage } from "./scan.js";
-import { uncollect } from "./uncollect.js";
+import { openOriginal, uncollect } from "./uncollect.js";
 import { addSources, isDue, localDay, source, updateItem } from "./model.js";
 
 const alarmName = "reread-check";
@@ -62,12 +63,13 @@ chrome.notifications.onClicked.addListener(id => {
   }
 });
 
-function removeFromCollection(id) {
+function removeFromCollection(id, rejectIfProtected = false) {
   if (removals.has(id)) return removals.get(id);
   const operation = (async () => {
     const { items = [] } = await chrome.storage.local.get("items");
     const item = items.find(entry => entry.id === id);
     if (!item || item.favoriteRemoved) throw new Error("这条记录已移出复读。");
+    if (rejectIfProtected && protectedItem(item)) throw new Error("这条帖子已有笔记或行动，请重新核对名单。");
     const outcome = await uncollect(chrome, item);
     await run(async () => {
       const { items = [], excluded = [] } = await chrome.storage.local.get(["items", "excluded"]);
@@ -75,6 +77,7 @@ function removeFromCollection(id) {
       const entry = items[index];
       if (entry?.body || entry?.history.length) {
         entry.favoriteRemoved = true;
+        delete entry.reviewRemoved;
         entry.status = "closed";
         entry.due = "";
       } else if (entry) {
@@ -103,9 +106,10 @@ async function changeItems(input) {
         return false;
       }
       blocked.delete(id);
-      const archived = items.find(item => item.id === id && item.favoriteRemoved);
+      const archived = items.find(item => item.id === id && (item.favoriteRemoved || item.reviewRemoved));
       if (archived) {
         delete archived.favoriteRemoved;
+        delete archived.reviewRemoved;
         if (archived.kind !== "archived") archived.status = "open";
       }
       return true;
@@ -197,12 +201,59 @@ function advanceScan() {
   return scanStep;
 }
 
+async function cleanupDecision(input) {
+  const { cleanupPreferences = {} } = await chrome.storage.local.get("cleanupPreferences");
+  if (input.decision === "topic") {
+    cleanupPreferences.topics = [...new Set([...(cleanupPreferences.topics || []), input.id])];
+  } else if (input.decision === "keep") {
+    cleanupPreferences.kept = [...new Set([...(cleanupPreferences.kept || []), input.id])];
+  } else if (input.decision === "skip" && stages.includes(input.stage)) {
+    cleanupPreferences.skipped ??= {};
+    cleanupPreferences.skipped[input.stage] = [
+      ...new Set([...(cleanupPreferences.skipped[input.stage] || []), input.id])
+    ];
+  } else {
+    throw new Error("无法保存清理决定。");
+  }
+  await chrome.storage.local.set({ cleanupPreferences });
+  return { cleanupPreferences };
+}
+
+async function moveOutOfReview(input) {
+  const { items = [], excluded = [] } = await chrome.storage.local.get(["items", "excluded"]);
+  const confirmations = new Map(input.entries.map(entry => [entry.id, entry.includeProtected]));
+  const moved = new Set(excluded);
+  const failed = new Set(confirmations.keys());
+  let completed = 0;
+  for (const item of items) {
+    if (!confirmations.has(item.id)) continue;
+    if (item.status !== "open" || removals.has(item.id) ||
+        (protectedItem(item) && !confirmations.get(item.id))) {
+      continue;
+    }
+    item.reviewRemoved = true;
+    item.status = "closed";
+    item.due = "";
+    moved.add(item.id);
+    failed.delete(item.id);
+    completed++;
+  }
+  await chrome.storage.local.set({ items, excluded: [...moved] });
+  return { completed, failed: [...failed] };
+}
+
 chrome.runtime.onMessage.addListener((input, sender, reply) => {
-  if (sender.id !== chrome.runtime.id || !["add", "convert", "checkin", "uncollect", "scan-start", "scan-step"].includes(input?.op)) return;
+  if (sender.id !== chrome.runtime.id || !["add", "convert", "checkin", "uncollect", "scan-start", "scan-step", "cleanup-decision", "cleanup-move", "open-original"].includes(input?.op)) return;
   const operations = {
-    uncollect: () => removeFromCollection(input.id),
+    uncollect: () => removeFromCollection(input.id, input.rejectIfProtected),
+    "open-original": async () => {
+      const { items = [] } = await chrome.storage.local.get("items");
+      await openOriginal(chrome, items.find(item => item.id === input.id));
+    },
     "scan-start": () => beginScan(input),
-    "scan-step": advanceScan
+    "scan-step": advanceScan,
+    "cleanup-decision": () => run(() => cleanupDecision(input)),
+    "cleanup-move": () => run(() => moveOutOfReview(input))
   };
   const operation = operations[input.op]?.() ?? run(() => changeItems(input));
   operation.then(result => reply({ ok: true, ...result }), error => reply({ ok: false, error: error.message }));

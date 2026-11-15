@@ -21,7 +21,9 @@ async function loadTab(browser, tabId, reload = false) {
       browser.tabs.onUpdated.addListener(onUpdated);
       browser.tabs.onRemoved.addListener(onRemoved);
       timer = setTimeout(() => reject(new Error("小红书原帖加载超时，请稍后重试。")), 12000);
-      if (reload) {
+      if (typeof reload === "string") {
+        browser.tabs.update(tabId, { url: reload }).catch(reject);
+      } else if (reload) {
         browser.tabs.reload(tabId, { bypassCache: true }).catch(reject);
       } else {
         browser.tabs.get(tabId).then(tab => {
@@ -51,27 +53,90 @@ async function findOpenNote(browser, noteId) {
     matching[0];
 }
 
+const connectionError = "Chrome 未能连接小红书原帖。已尝试备用原帖地址，请检查网页连接后重试。";
+
+function alternativeUrls(original) {
+  const url = new URL(original.url);
+  const canonical = new URL(url);
+  canonical.pathname = `/explore/${original.id}`;
+  const alternate = new URL(canonical);
+  alternate.hostname = url.hostname === "www.xiaohongshu.com" ? "xiaohongshu.com" : "www.xiaohongshu.com";
+  return [...new Set([alternate.href, canonical.href])].filter(link => link !== original.url);
+}
+
+function readOriginalLocation(id, hosts, notePattern) {
+  const page = new URL(location.href);
+  return page.protocol === "https:" && hosts.includes(page.hostname) &&
+    new RegExp(notePattern, "i").exec(page.pathname)?.[1]?.toLowerCase() === id &&
+    page.searchParams.get("source") !== "404";
+}
+
+async function openNote(browser, original, activateExisting) {
+  const existing = await findOpenNote(browser, original.id);
+  const tab = existing || await browser.tabs.create({ url: original.url, active: true });
+  if (existing && (activateExisting || existing.discarded)) {
+    await browser.tabs.update(tab.id, { active: true });
+  }
+  const alternatives = alternativeUrls(original);
+  let sawDocument = false;
+  for (const candidate of [null, ...alternatives]) {
+    try {
+      if (candidate) await loadTab(browser, tab.id, candidate);
+      else await loadTab(browser, tab.id);
+      const [frame] = await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: readOriginalLocation,
+        args: [original.id, xhsHosts, xhsNotePath.source]
+      });
+      if (frame?.result) return { tab, existing };
+      sawDocument = true;
+      const { url } = await browser.tabs.get(tab.id);
+      if (url && !xhsHosts.includes(new URL(url).hostname)) throw new Error("小红书跳转了页面，请在原帖标签页检查登录或访问状态。");
+      if (url && /login|captcha|verify/i.test(new URL(url).pathname)) {
+        throw new Error("小红书要求登录或验证，请在原帖标签页按网站提示处理。");
+      }
+    } catch (error) {
+      if (!/error page|net::ERR_|cannot access a chrome|chrome-error|加载超时/i.test(error.message)) throw error;
+    }
+  }
+  throw new Error(sawDocument ? "小红书没有显示这条原帖，可能是链接过期或笔记不可见。" : connectionError);
+}
+
+export async function openOriginal(browser, item) {
+  const original = source(item?.url);
+  if (!original || original.id !== item.id) throw new Error("这条记录没有可用的原帖地址。");
+  if (original.id.startsWith("share:")) {
+    await browser.tabs.create({ url: original.url, active: true });
+  } else {
+    await openNote(browser, original, true);
+  }
+}
+
 export async function uncollect(browser, item) {
   const original = source(item?.url);
   if (!original || original.id !== item.id || original.id.startsWith("share:")) {
     throw new Error("这条记录缺少可验证的原帖地址。请从收藏页重新导入它。");
   }
 
-  const existing = await findOpenNote(browser, item.id);
-  const tab = existing || await browser.tabs.create({ url: original.url, active: true });
-  if (existing?.discarded) await browser.tabs.update(tab.id, { active: true });
+  const { tab, existing } = await openNote(browser, original, false);
   let verified = false;
   const check = async click => {
-    const [frame] = await browser.scripting.executeScript({
-      target: { tabId: tab.id },
-      world: "MAIN",
-      func: readFavoriteControl,
-      args: [item.id, xhsHosts, xhsNotePath.source, click]
-    });
-    return frame?.result;
+    try {
+      const [frame] = await browser.scripting.executeScript({
+        target: { tabId: tab.id },
+        world: "MAIN",
+        func: readFavoriteControl,
+        args: [item.id, xhsHosts, xhsNotePath.source, click]
+      });
+      return frame?.result;
+    } catch (error) {
+      if (/error page|net::ERR_|chrome-error/i.test(error.message)) {
+        throw new Error("确认收藏状态时连接断开。拾读已保留这条记录，请检查原帖后再试。");
+      }
+      throw error;
+    }
   };
   try {
-    await loadTab(browser, tab.id);
     let before = await check(true);
     if (existing && before === "not-collected") {
       await loadTab(browser, tab.id, true);
@@ -83,7 +148,6 @@ export async function uncollect(browser, item) {
     }
     if (before !== "clicked") throw new Error(failures[before] || failures.unknown);
 
-    // Confirm that the website persisted the change before altering the local queue.
     await loadTab(browser, tab.id, true);
     const after = await check(false);
     if (after !== "not-collected") throw new Error(failures[after] || failures.unknown);

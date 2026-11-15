@@ -231,7 +231,7 @@ function makeCard(item) {
   const kind = card.querySelector(".kind");
   kind.textContent = kinds[item.kind];
   kind.dataset.kind = item.kind;
-  date.textContent = item.favoriteRemoved ? "已取消收藏" : item.due
+  date.textContent = item.favoriteRemoved ? "已取消收藏" : item.reviewRemoved ? "已移出复读" : item.due
     ? `回看 ${item.due}${due ? (item.due < localDay() ? " · 已逾期" : " · 今天") : ""}`
     : (item.kind !== "archived" && item.status === "closed" ? "已完成" : "");
   date.classList.toggle("overdue", due);
@@ -239,7 +239,14 @@ function makeCard(item) {
   const body = card.querySelector(".body");
   body.textContent = item.body;
   body.hidden = !item.body;
-  card.querySelector("a").href = item.url;
+  const original = card.querySelector("a");
+  original.href = item.url;
+  original.addEventListener("click", event => {
+    if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    showNotice("正在打开原帖…");
+    commit({ op: "open-original", id: item.id }).then(() => showNotice(""), error => showNotice(error.message));
+  });
   const edit = card.querySelector(".edit");
   edit.textContent = item.kind === "inbox" ? "写笔记 / 行动" : "编辑";
   edit.hidden = item.status === "closed";
@@ -378,6 +385,11 @@ $("#export").addEventListener("click", () => {
 $("#open-workspace").addEventListener("click", () => {
   chrome.windows.create({ url: chrome.runtime.getURL("index.html#workspace"), type: "popup", width: 790, height: 850 })
     .catch(error => showNotice(error.message));
+});
+$("#open-cleanup").addEventListener("click", () => {
+  const url = chrome.runtime.getURL("cleanup.html");
+  if (dashboard) location.href = url;
+  else chrome.windows.create({ url, type: "popup", width: 850, height: 900 }).catch(error => showNotice(error.message));
 });
 $("#open-workspace").hidden = dashboard;
 $("#scan-start").hidden = dashboard;

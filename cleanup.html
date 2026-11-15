@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>整理收藏 · 拾读</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="cleanup.css">
+</head>
+<body>
+  <main>
+    <header class="masthead">
+      <img src="icons/48.png" width="40" height="40" alt="">
+      <div><h1>整理收藏</h1><p>拾读</p></div>
+      <a class="workspace" href="index.html#workspace">返回复读列表</a>
+    </header>
+    <nav id="stages" aria-label="清理步骤">
+      <button data-stage="expiry" type="button">1. 过期信息</button>
+      <button data-stage="topics" type="button">2. 按主题</button>
+      <button data-stage="quick" type="button">3. 逐条看</button>
+    </nav>
+    <h2 id="stage-title"></h2>
+    <p id="hint" class="muted"></p>
+    <p id="state-message" role="status"></p>
+    <section id="results" aria-label="清理候选"></section>
+    <div id="more" class="card-actions" hidden>
+      <button id="previous" type="button">上一页</button><span id="page-number"></span><button id="next" type="button">下一页</button>
+    </div>
+    <footer class="selection">
+      <span id="selection-count" aria-live="polite"></span>
+      <button id="review" class="primary" type="button" disabled>核对待清理名单</button>
+    </footer>
+  </main>
+  <dialog id="confirm">
+    <form id="confirm-form">
+      <h2>核对待清理名单</h2>
+      <p id="confirm-summary"></p>
+      <ol id="confirm-list"></ol>
+      <fieldset>
+        <legend>选择怎么处理</legend>
+        <label><input type="radio" name="mode" value="local" checked> 只移出拾读的复读列表</label>
+        <label><input type="radio" name="mode" value="site" id="site-mode"> 同时取消小红书收藏</label>
+        <p id="unavailable" class="muted" hidden>名单中有分享短链。请先通过原帖链接重新收录，或选择只移出拾读。</p>
+      </fieldset>
+      <p id="run-status" role="status"></p>
+      <ul id="failed" hidden></ul>
+      <div class="dialog-actions">
+        <button id="close-review" type="button">返回</button>
+        <button id="cancel-run" type="button" hidden>当前条处理完后停止</button>
+        <button id="confirm-run" class="primary" type="submit">执行</button>
+      </div>
+    </form>
+  </dialog>
+  <script type="module" src="cleanup.js"></script>
+</body>
+</html>
