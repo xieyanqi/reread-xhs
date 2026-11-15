@@ -1,0 +1,67 @@
+:root {
+  color-scheme: light;
+  font-family: "DM Sans", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  color: #2d211d;
+  background: #fbf7ee;
+  --ink: #2d211d;
+  --muted: #6c5b52;
+  --red: #8d3033;
+  --line: #e3d8cb;
+  --paper: #fffdf8;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; min-width: 270px; }
+main { max-width: 660px; margin: 0 auto; padding: 24px clamp(14px, 5vw, 30px); }
+h1, h2, p { margin: 0; }
+.masthead { display: flex; align-items: center; gap: 12px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+h1 { font-size: 27px; font-weight: 740; letter-spacing: .06em; line-height: 1.13; }
+.masthead p { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.workspace { margin-left: auto; }
+.capture { margin: 16px 0 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; }
+.capture details[open] { flex-basis: 100%; }
+.capture details form { padding: 10px 0 0; }
+.capture details button { margin-top: 8px; }
+.notice { flex-basis: 100%; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.notice:empty, .error:empty { display: none; }
+button, input, select, textarea { font: inherit; }
+button, .card a {
+  display: inline-block; border: 1px solid var(--line); background: var(--paper); border-radius: 8px;
+  color: var(--ink); padding: 8px 11px; cursor: pointer; font-size: 13px; line-height: 1.3; text-decoration: none;
+}
+button:hover, .card a:hover { border-color: #ae8b7d; background: #fff2e7; }
+button:disabled { opacity: .6; cursor: wait; }
+button.primary { background: var(--red); border-color: var(--red); color: #fff8f3; }
+button.primary:hover { background: #6e2427; }
+button.quiet { background: transparent; border-color: transparent; color: var(--muted); padding-inline: 4px; }
+button.quiet:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--red); outline-offset: 3px; }
+nav { display: flex; flex-wrap: wrap; gap: 7px; margin: 18px 0 14px; }
+nav button { border-radius: 999px; padding-inline: 10px; }
+nav button[aria-pressed="true"] { color: #7e2829; border-color: #e4b7ae; background: #f7e7e1; font-weight: 700; }
+nav span { margin-left: 2px; font-variant-numeric: tabular-nums; }
+.card, .empty { padding: 17px; background: var(--paper); border: 1px solid var(--line); border-radius: 12px; }
+.card + .card { margin-top: 10px; }
+.card h2, .empty h2, dialog h2 { font-size: 17px; line-height: 1.5; overflow-wrap: anywhere; }
+.empty { padding: 27px 18px; }
+.empty p, .card .body { margin-top: 7px; line-height: 1.65; font-size: 14px; overflow-wrap: anywhere; white-space: pre-wrap; }
+.empty p { color: var(--muted); }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-bottom: 8px; font-size: 12px; color: var(--muted); }
+.kind { background: #eee9db; color: #544536; border-radius: 5px; padding: 3px 6px; }
+.kind[data-kind=action] { background: #f5e3de; color: #7e2b2d; }
+.kind[data-kind=note] { background: #e4eee2; color: #36563c; }
+.overdue { color: var(--red); font-weight: 660; }
+.card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
+summary { cursor: pointer; color: var(--red); font-size: 13px; }
+.history { margin-top: 13px; border-top: 1px solid var(--line); padding-top: 10px; }
+.history ol { padding-left: 20px; margin-bottom: 0; font-size: 13px; }
+.history li + li { margin-top: 8px; }
+.history li p { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 3px; }
+footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 15px; font-size: 12px; color: var(--muted); }
+dialog { width: min(460px, calc(100% - 24px)); max-height: calc(100% - 24px); border: 1px solid var(--line); border-radius: 15px; background: var(--paper); padding: 19px; color: var(--ink); }
+dialog::backdrop { background: #30241d55; }
+label { display: block; font-size: 13px; margin: 11px 0 5px; color: var(--muted); }
+input, select, textarea { display: block; width: 100%; padding: 8px; border: 1px solid #cebfb1; border-radius: 7px; color: var(--ink); background: #fffefb; font-size: 14px; }
+textarea { resize: vertical; }
+.error { margin-top: 9px; font-size: 13px; color: var(--red); }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 15px; }

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>拾读 · 小红书收藏复读</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main>
+    <header class="masthead">
+      <img src="icons/48.png" width="40" height="40" alt="">
+      <div><h1>拾读</h1><p>小红书收藏复读</p></div>
+      <button id="open-workspace" class="quiet workspace" type="button">独立窗口 ↗</button>
+    </header>
+    <section class="capture" aria-label="导入收藏">
+      <button class="primary" id="capture" type="button">导入当前小红书页面</button>
+      <details>
+        <summary>粘贴链接</summary>
+        <form id="paste-form">
+          <label for="links">小红书帖子链接或分享文本，可粘贴多条</label>
+          <textarea id="links" required rows="3" placeholder="https://www.xiaohongshu.com/explore/…"></textarea>
+          <button type="submit">加入待复读</button>
+        </form>
+      </details>
+      <p id="notice" class="notice" role="status"></p>
+    </section>
+    <nav aria-label="收藏列表">
+      <button type="button" data-view="inbox">待复读 <span></span></button>
+      <button type="button" data-view="due">待回看 <span></span></button>
+      <button type="button" data-view="all">全部 <span></span></button>
+    </nav>
+    <section id="list" aria-label="收藏条目"></section>
+    <footer><button id="export" class="quiet" type="button">导出 Markdown</button><span>保存在当前浏览器</span></footer>
+  </main>
+  <template id="card-template">
+    <article class="card">
+      <div class="meta"><span class="kind"></span><span class="date"></span></div>
+      <h2></h2>
+      <p class="body"></p>
+      <div class="card-actions">
+        <a target="_blank" rel="noopener noreferrer">打开原帖 ↗</a>
+        <button class="edit" type="button"></button>
+        <button class="check" type="button">记录复盘</button>
+      </div>
+      <details class="history"><summary></summary><ol></ol></details>
+    </article>
+  </template>
+  <dialog id="editor">
+    <form id="edit-form">
+      <h2>复读后怎么用？</h2>
+      <label for="title">标题</label>
+      <input id="title" maxlength="120" placeholder="给这条收藏起个名字">
+      <label for="kind">处理方式</label>
+      <select id="kind">
+        <option value="note">写成笔记</option>
+        <option value="action">转成行动</option>
+        <option value="archived">归档</option>
+      </select>
+      <label id="body-label" for="body">用自己的话写下值得留下的内容</label>
+      <textarea id="body" rows="4" maxlength="10000"></textarea>
+      <div id="date-field"><label for="due-date">回看日期</label><input id="due-date" type="date"></div>
+      <p class="error" role="status"></p>
+      <div class="dialog-actions"><button class="cancel" type="button">取消</button><button class="primary" type="submit">保存</button></div>
+    </form>
+  </dialog>
+  <dialog id="check-dialog">
+    <form id="check-form">
+      <h2>记录复盘</h2>
+      <label for="outcome">这次怎么样？</label>
+      <select id="outcome">
+        <option value="progress">有进展</option>
+        <option value="blocked">卡住了</option>
+        <option value="complete">已完成，结束跟进</option>
+      </select>
+      <label id="check-label" for="check-text">这次做了什么？</label>
+      <textarea id="check-text" rows="4" required maxlength="10000"></textarea>
+      <div id="next-field"><label for="next-date">下次回看日期</label><input id="next-date" type="date" required></div>
+      <p class="error" role="status"></p>
+      <div class="dialog-actions"><button class="cancel" type="button">取消</button><button class="primary" type="submit">保存复盘</button></div>
+    </form>
+  </dialog>
+  <script src="app.js" type="module"></script>
+</body>
+</html>
