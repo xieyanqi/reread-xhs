@@ -52,6 +52,7 @@ nav span { margin-left: 2px; font-variant-numeric: tabular-nums; }
 .kind[data-kind=note] { background: #e4eee2; color: #36563c; }
 .overdue { color: var(--red); font-weight: 660; }
 .card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 13px; }
+.card-actions .uncollect { color: var(--red); }
 summary { cursor: pointer; color: var(--red); font-size: 13px; }
 .history { margin-top: 13px; border-top: 1px solid var(--line); padding-top: 10px; }
 .history ol { padding-left: 20px; margin-bottom: 0; font-size: 13px; }

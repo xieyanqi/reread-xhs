@@ -89,51 +89,78 @@ export function readPage(previousIds, hosts, notePattern, expectedOrigin, readCo
     return node.getClientRects().length > 0 && !node.closest('[hidden], [aria-hidden="true"]');
   }
 
+  let collectionSelected = false;
+  let collectionReadable = false;
+  const favoriteLabel = /^(收藏(?:的笔记)?|saved|favorites)$/i;
+  const favoriteTab = /^(fav|collect|saved|favorite)$/i;
+  const unwrap = value => value?.value ?? value?._value ?? value?._rawValue ?? value;
+
   function collect() {
-    const selected = Array.from(document.querySelectorAll(
+    const tabs = Array.from(document.querySelectorAll(
       '[role="tab"][aria-selected="true"], .user-tabs .active, .user-tab.active, .tab-item.active, .reds-tab-item.active'
-    )).find(visible);
-    const label = selected?.textContent?.trim();
-    const fav = profile && (/收藏|saved|favorites/i.test(label || "") ||
-      (!label && /^(fav|collect|saved|favorite)$/.test(page.searchParams.get("tab") || "")));
-    // Scope to the displayed results when the site marks them as a tab panel.
-    const panelId = selected?.getAttribute("aria-controls");
-    const panel = panelId && document.getElementById(panelId);
-    const root = panel && visible(panel) ? panel : document;
-    const cardSelector = '.note-item, [data-note-id], [data-noteid]';
-    for (const node of root.querySelectorAll('a[href], [data-href], [data-url]')) {
-      const card = node.closest(cardSelector);
-      if (!visible(node) && !(card && visible(card))) continue;
-      const title = card?.querySelector(".footer .title, .title, [data-title]")?.textContent
-        || node.getAttribute("aria-label")
-        || node.textContent
-        || node.querySelector("img[alt]")?.alt;
-      for (const attr of ["href", "data-href", "data-url"]) add(node.getAttribute(attr), title);
-    }
-    for (const card of root.querySelectorAll(cardSelector)) {
-      if (!visible(card)) continue;
-      addCard(
-        card.getAttribute("data-note-id") || card.getAttribute("data-noteid"),
-        card.getAttribute("data-xsec-token"),
-        card.querySelector(".footer .title, .title")?.textContent || card.getAttribute("data-title")
-      );
-    }
-    if (!fav || !readCollectionState) return;
-    // The page can have loaded collection results before rendering them as cards.
-    const user = window.__INITIAL_STATE__?.user;
-    const unwrap = value => value?.value ?? value?._value ?? value?._rawValue ?? value;
-    for (const key of ["collectNotes", "collectedNotes", "collect"]) {
-      const collection = unwrap(user?.[key]);
-      const records = unwrap(collection?.data?.notes ?? collection?.notes ?? collection);
-      if (!Array.isArray(records)) continue;
-      for (const record of records.flat(2)) {
-        const card = record?.noteCard ?? record?.note_card ?? record;
-        addCard(
-          card?.noteId ?? card?.note_id ?? record?.id,
-          record?.xsecToken ?? record?.xsec_token ?? card?.xsecToken ?? card?.xsec_token,
-          card?.displayTitle ?? card?.display_title ?? card?.title
-        );
+    )).filter(visible);
+    const label = node => node.textContent.trim();
+    const favorite = tabs.find(node => favoriteLabel.test(label(node)));
+    const otherTab = tabs.some(node => /^(赞过|获赞|喜欢|点赞|liked|发布|作品|published)$/i.test(label(node)));
+    collectionSelected = profile && Boolean(favorite ||
+      (!otherTab && favoriteTab.test(page.searchParams.get("tab") || "")));
+    if (!collectionSelected) return;
+
+    const approved = new Set();
+    if (readCollectionState) {
+      const user = window.__INITIAL_STATE__?.user;
+      const pinia = document.querySelector("#app")?.__vue_app__?.config?.globalProperties?.$pinia;
+      const liveLists = unwrap(pinia?._s?.get("user")?.$state?.notes);
+      // The profile store uses index 0 for published posts and index 1 for favorites.
+      const records = [unwrap(liveLists?.[1]), unwrap(unwrap(user?.notes)?.[1])];
+      for (const key of ["collectNotes", "collectedNotes", "collect"]) {
+        const list = unwrap(user?.[key]);
+        records.push(unwrap(list?.data?.notes ?? list?.notes ?? list));
       }
+      for (const list of records) {
+        if (!Array.isArray(list)) continue;
+        collectionReadable = true;
+        for (const entry of list.flat(2)) {
+          const card = entry?.noteCard ?? entry?.note_card ?? entry;
+          const id = card?.noteId ?? card?.note_id ?? entry?.id;
+          if (typeof id !== "string" || !/^[a-f\d]{24}$/i.test(id)) continue;
+          approved.add(id.toLowerCase());
+          addCard(id,
+            entry?.xsecToken ?? entry?.xsec_token ?? card?.xsecToken ?? card?.xsec_token,
+            card?.displayTitle ?? card?.display_title ?? card?.title);
+        }
+      }
+    }
+
+    const panelId = favorite?.getAttribute("aria-controls");
+    const panel = panelId ? document.getElementById(panelId) :
+      document.querySelector('[role="tabpanel"][data-tab="fav"], [role="tabpanel"][data-tab="collect"]');
+    const root = panel && visible(panel) ? panel : null;
+    if (!root && !approved.size) return;
+    if (root) collectionReadable = true;
+    const cardSelector = '.note-item, [data-note-id], [data-noteid]';
+    for (const node of (root || document).querySelectorAll('a[href], [data-href], [data-url]')) {
+      const card = node.closest(cardSelector);
+      if (!card || !visible(card)) continue;
+      const title = card.querySelector(".footer .title, .title")?.textContent
+        || node.getAttribute("aria-label") || node.textContent || node.querySelector("img[alt]")?.alt;
+      for (const attr of ["href", "data-href", "data-url"]) {
+        const raw = node.getAttribute(attr);
+        if (!raw) continue;
+        try {
+          const id = new URL(raw, page.origin).pathname.match(notePath)?.[1]?.toLowerCase();
+          if (id && (root || approved.has(id))) add(raw, title);
+        } catch {
+          continue;
+        }
+      }
+    }
+    for (const card of (root || document).querySelectorAll(cardSelector)) {
+      if (!visible(card)) continue;
+      const id = card.getAttribute("data-note-id") || card.getAttribute("data-noteid");
+      if (!id || (!root && !approved.has(id.toLowerCase()))) continue;
+      addCard(id, card.getAttribute("data-xsec-token"),
+        card.querySelector(".footer .title, .title")?.textContent || card.getAttribute("data-title"));
     }
   }
 
@@ -144,6 +171,7 @@ export function readPage(previousIds, hosts, notePattern, expectedOrigin, readCo
       collect();
       if ([...found.keys()].some(id => !known.has(id))) break;
     }
-    return { entries: [...found.values()], profile };
+    const reason = !collectionSelected ? "choose-collection" : !collectionReadable ? "unavailable-collection" : "";
+    return { entries: [...found.values()], profile, collection: true, reason };
   })();
 }

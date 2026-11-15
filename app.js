@@ -1,5 +1,5 @@
 import { captureActiveTab } from "./capture.js";
-import { dayAfter, isDue, kinds, localDay, outcomes } from "./model.js";
+import { dayAfter, isDue, kinds, localDay, outcomes, source } from "./model.js";
 
 const $ = selector => document.querySelector(selector);
 const editor = $("#editor");
@@ -7,6 +7,7 @@ const checkDialog = $("#check-dialog");
 const dashboard = location.hash.length > 0;
 let view = location.hash === "#due" ? "due" : "inbox";
 let items = [];
+const removing = new Set();
 
 function showNotice(message) {
   $("#notice").textContent = message;
@@ -19,16 +20,30 @@ async function commit(input) {
 }
 
 async function importEntries(entries, pageResult) {
-  const { added, matched } = await commit({ op: "add", entries });
-  if (!matched) {
-    showNotice(pageResult?.profile
-      ? "识别到 0 条帖子。请确认已选中「收藏」且看到了帖子卡片，再点导入。"
+  if (pageResult?.reason === "choose-collection") {
+    showNotice("批量导入请打开「我的主页 → 收藏 → 笔记」。");
+    return false;
+  }
+  if (pageResult?.reason === "unavailable-collection") {
+    showNotice("未能确认当前是收藏笔记列表。请刷新「收藏 → 笔记」，等卡片出现后再点导入。");
+    return false;
+  }
+  if (!entries.length) {
+    showNotice(pageResult?.collection
+      ? "在收藏列表中识别到 0 条笔记。"
       : "未识别到小红书帖子链接。可以打开单篇原帖，或粘贴分享链接。");
+    return false;
+  }
+  const { added, matched, skipped } = await commit({
+    op: "add", entries, collection: Boolean(pageResult?.collection)
+  });
+  if (!matched && !skipped) {
+    showNotice("未识别到小红书帖子链接。");
     return false;
   }
   view = "inbox";
   render();
-  showNotice(`识别到 ${matched} 条，新增 ${added} 条${matched > added ? `，已收录 ${matched - added} 条` : ""}。`);
+  showNotice(`识别到 ${matched + skipped} 条，新增 ${added} 条${matched > added ? `，已收录 ${matched - added} 条` : ""}${skipped ? `，跳过已移出的 ${skipped} 条` : ""}。`);
   return true;
 }
 
@@ -103,6 +118,24 @@ function itemTitle(item) {
   return item.title || "小红书帖子";
 }
 
+async function removeFavorite(item) {
+  if (removing.has(item.id)) return;
+  removing.add(item.id);
+  render();
+  showNotice("正在检查这条笔记在小红书上的收藏状态…");
+  try {
+    const { outcome } = await commit({ op: "uncollect", id: item.id });
+    showNotice(outcome === "already-removed"
+      ? "原帖当前未收藏，已移出复读。"
+      : "已在小红书取消收藏，并移出复读。");
+  } catch (error) {
+    showNotice(error.message);
+  } finally {
+    removing.delete(item.id);
+    render();
+  }
+}
+
 function makeCard(item) {
   const card = $("#card-template").content.firstElementChild.cloneNode(true);
   const due = isDue(item);
@@ -110,7 +143,7 @@ function makeCard(item) {
   const kind = card.querySelector(".kind");
   kind.textContent = kinds[item.kind];
   kind.dataset.kind = item.kind;
-  date.textContent = item.due
+  date.textContent = item.favoriteRemoved ? "已取消收藏" : item.due
     ? `回看 ${item.due}${due ? (item.due < localDay() ? " · 已逾期" : " · 今天") : ""}`
     : (item.kind !== "archived" && item.status === "closed" ? "已完成" : "");
   date.classList.toggle("overdue", due);
@@ -126,6 +159,11 @@ function makeCard(item) {
   const check = card.querySelector(".check");
   check.hidden = item.status === "closed" || !item.due;
   check.addEventListener("click", () => openCheck(item));
+  const uncollect = card.querySelector(".uncollect");
+  uncollect.hidden = item.favoriteRemoved || !source(item.url) || item.id.startsWith("share:");
+  uncollect.disabled = removing.has(item.id);
+  uncollect.textContent = uncollect.disabled ? "正在取消…" : "取消收藏并移出";
+  uncollect.addEventListener("click", () => removeFavorite(item));
   const history = card.querySelector(".history");
   history.hidden = !item.history.length;
   history.open = Boolean(item.history.length && item.status === "closed");

@@ -1,8 +1,10 @@
-import { addSources, isDue, localDay, updateItem } from "./model.js";
+import { uncollect } from "./uncollect.js";
+import { addSources, isDue, localDay, source, updateItem } from "./model.js";
 
 const alarmName = "reread-check";
 const noticeId = "reread-due";
 let queue = Promise.resolve();
+const removals = new Map();
 
 function run(task) {
   const operation = queue.then(task);
@@ -58,16 +60,67 @@ chrome.notifications.onClicked.addListener(id => {
   }
 });
 
-chrome.runtime.onMessage.addListener((input, sender, reply) => {
-  if (sender.id !== chrome.runtime.id || !["add", "convert", "checkin"].includes(input?.op)) return;
-  run(async () => {
+function removeFromCollection(id) {
+  if (removals.has(id)) return removals.get(id);
+  const operation = (async () => {
     const { items = [] } = await chrome.storage.local.get("items");
-    const result = input.op === "add"
-      ? addSources(items, input.entries)
-      : updateItem(items.find(item => item.id === input.id), input);
+    const item = items.find(entry => entry.id === id);
+    if (!item || item.favoriteRemoved) throw new Error("这条记录已移出复读。");
+    const outcome = await uncollect(chrome, item);
+    await run(async () => {
+      const { items = [], excluded = [] } = await chrome.storage.local.get(["items", "excluded"]);
+      const index = items.findIndex(entry => entry.id === id);
+      const entry = items[index];
+      if (entry?.body || entry?.history.length) {
+        entry.favoriteRemoved = true;
+        entry.status = "closed";
+        entry.due = "";
+      } else if (entry) {
+        items.splice(index, 1);
+      }
+      if (!excluded.includes(id)) excluded.push(id);
+      await chrome.storage.local.set({ items, excluded });
+    });
+    return { outcome };
+  })().finally(() => removals.delete(id));
+  removals.set(id, operation);
+  return operation;
+}
+
+async function changeItems(input) {
+  const { items = [], excluded = [] } = await chrome.storage.local.get(["items", "excluded"]);
+  let result;
+  if (input.op === "add") {
+    const blocked = new Set(excluded);
+    let skipped = 0;
+    const entries = input.entries.filter(entry => {
+      const id = source(entry.url)?.id;
+      if (!blocked.has(id)) return true;
+      if (input.collection) {
+        skipped += 1;
+        return false;
+      }
+      blocked.delete(id);
+      const archived = items.find(item => item.id === id && item.favoriteRemoved);
+      if (archived) {
+        delete archived.favoriteRemoved;
+        if (archived.kind !== "archived") archived.status = "open";
+      }
+      return true;
+    });
+    result = { ...addSources(items, entries), skipped };
+    await chrome.storage.local.set({ items, excluded: [...blocked] });
+  } else {
+    updateItem(items.find(item => item.id === input.id), input);
     await chrome.storage.local.set({ items });
-    return { ok: true, ...result };
-  }).then(reply, error => reply({ ok: false, error: error.message }));
+  }
+  return result;
+}
+
+chrome.runtime.onMessage.addListener((input, sender, reply) => {
+  if (sender.id !== chrome.runtime.id || !["add", "convert", "checkin", "uncollect"].includes(input?.op)) return;
+  const operation = input.op === "uncollect" ? removeFromCollection(input.id) : run(() => changeItems(input));
+  operation.then(result => reply({ ok: true, ...result }), error => reply({ ok: false, error: error.message }));
   return true;
 });
 
