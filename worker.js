@@ -1,5 +1,5 @@
-import { batchLimit, batchIds, batchItems, restrictedMessage, siteRestricted } from "./batch.js";
-import { protectedItem, stages } from "./cleanup-model.js";
+import { batchLimit, batchIds, batchItems, pendingUncollectInBatch, restrictedMessage, siteRestricted } from "./batch.js";
+import { canUncollect, protectedItem, stages } from "./cleanup-model.js";
 import { collectionProfile, isCollectionUrl, scanPage } from "./scan.js";
 import { openOriginal, uncollect } from "./uncollect.js";
 import { addSources, isDue, localDay, source, updateItem } from "./model.js";
@@ -105,18 +105,25 @@ chrome.notifications.onClicked.addListener(id => {
   }
 });
 
-function removeFromCollection(id, rejectIfProtected = false) {
+function removeFromCollection(id, rejectIfProtected = false, fromQueue = false) {
   if (removals.has(id)) return removals.get(id);
   if (removals.size) return Promise.reject(new Error("正在处理另一条笔记，请等它完成。"));
   const operation = (async () => {
-    const { items = [], scan } = await chrome.storage.local.get(["items", "scan"]);
+    const { items = [], scan, pendingUncollect = [] } =
+      await chrome.storage.local.get(["items", "scan", "pendingUncollect"]);
     assertBatch(scan, id);
+    if (fromQueue) {
+      const current = pendingUncollectInBatch(pendingUncollect, scan)[0];
+      if (current?.id !== id) throw new Error("待取消名单已更新，请确认当前这一条。");
+      rejectIfProtected = !current.includeProtected;
+    }
     const item = items.find(entry => entry.id === id);
     if (!item || item.favoriteRemoved) throw new Error("这条记录已移出复读。");
     if (rejectIfProtected && protectedItem(item)) throw new Error("这条帖子已有笔记或行动，请重新核对名单。");
     const outcome = await siteAction(() => uncollect(chrome, item));
     await run(async () => {
-      const { items = [], excluded = [] } = await chrome.storage.local.get(["items", "excluded"]);
+      const { items = [], excluded = [], pendingUncollect = [] } =
+        await chrome.storage.local.get(["items", "excluded", "pendingUncollect"]);
       const index = items.findIndex(entry => entry.id === id);
       const entry = items[index];
       if (entry?.body || entry?.history.length) {
@@ -128,7 +135,9 @@ function removeFromCollection(id, rejectIfProtected = false) {
         items.splice(index, 1);
       }
       if (!excluded.includes(id)) excluded.push(id);
-      await chrome.storage.local.set({ items, excluded });
+      await chrome.storage.local.set({
+        items, excluded, pendingUncollect: pendingUncollect.filter(entry => entry.id !== id)
+      });
     });
     return { outcome };
   })().finally(() => removals.delete(id));
@@ -299,8 +308,39 @@ async function cleanupDecision(input) {
   return { cleanupPreferences };
 }
 
+async function enqueueUncollect(entries) {
+  const { items = [], scan, pendingUncollect = [] } =
+    await chrome.storage.local.get(["items", "scan", "pendingUncollect"]);
+  const itemsById = new Map(batchItems(items, scan).map(item => [item.id, item]));
+  const queued = new Set(pendingUncollect.map(entry => entry.id));
+  const failed = [];
+  let added = 0;
+  for (const { id, includeProtected } of entries) {
+    const item = itemsById.get(id);
+    if (!item || item.status !== "open" || item.favoriteRemoved || !canUncollect(item) ||
+        (protectedItem(item) && !includeProtected)) {
+      failed.push(id);
+      continue;
+    }
+    if (queued.has(id)) continue;
+    queued.add(id);
+    pendingUncollect.push({ id, includeProtected: Boolean(includeProtected) });
+    added++;
+  }
+  if (added) await chrome.storage.local.set({ pendingUncollect });
+  return { added, failed };
+}
+
+async function dropPendingUncollect(id) {
+  if (removals.has(id)) throw new Error("这条笔记正在处理，请等它完成。");
+  const { scan, pendingUncollect = [] } = await chrome.storage.local.get(["scan", "pendingUncollect"]);
+  assertBatch(scan, id);
+  await chrome.storage.local.set({ pendingUncollect: pendingUncollect.filter(entry => entry.id !== id) });
+}
+
 async function moveOutOfReview(input) {
-  const { items = [], excluded = [], scan } = await chrome.storage.local.get(["items", "excluded", "scan"]);
+  const { items = [], excluded = [], scan, pendingUncollect = [] } =
+    await chrome.storage.local.get(["items", "excluded", "scan", "pendingUncollect"]);
   const active = scan ? batchIds(scan) : null;
   const confirmations = new Map(input.entries.map(entry => [entry.id, entry.includeProtected]));
   const moved = new Set(excluded);
@@ -319,14 +359,20 @@ async function moveOutOfReview(input) {
     failed.delete(item.id);
     completed++;
   }
-  await chrome.storage.local.set({ items, excluded: [...moved] });
+  await chrome.storage.local.set({
+    items, excluded: [...moved],
+    pendingUncollect: pendingUncollect.filter(entry => !confirmations.has(entry.id) || failed.has(entry.id))
+  });
   return { completed, failed: [...failed] };
 }
 
 chrome.runtime.onMessage.addListener((input, sender, reply) => {
-  if (sender.id !== chrome.runtime.id || !["add", "convert", "checkin", "uncollect", "scan-start", "scan-next", "scan-step", "site-resume", "cleanup-decision", "cleanup-move", "open-original"].includes(input?.op)) return;
+  if (sender.id !== chrome.runtime.id || !["add", "convert", "checkin", "uncollect", "scan-start", "scan-next", "scan-step", "site-resume", "cleanup-decision", "cleanup-move", "open-original", "uncollect-enqueue", "uncollect-next", "uncollect-drop"].includes(input?.op)) return;
   const operations = {
     uncollect: () => removeFromCollection(input.id, input.rejectIfProtected),
+    "uncollect-enqueue": () => run(() => enqueueUncollect(input.entries)),
+    "uncollect-next": () => removeFromCollection(input.id, false, true),
+    "uncollect-drop": () => run(() => dropPendingUncollect(input.id)),
     "open-original": () => siteAction(async () => {
       const { items = [], scan } = await chrome.storage.local.get(["items", "scan"]);
       assertBatch(scan, input.id);

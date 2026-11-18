@@ -28,6 +28,18 @@
       <button id="site-resume" type="button" hidden>收藏页恢复后重新检查</button>
       <p id="notice" class="notice" role="status"></p>
     </section>
+    <section id="pending-panel" class="scan" aria-labelledby="pending-title" hidden>
+      <h2 id="pending-title">待取消</h2>
+      <p class="notice">连续快速取消收藏可能触发小红书访问限制。每点一次只处理当前一条，遇到限制会保留进度。</p>
+      <p id="pending-count" class="notice" role="status"></p>
+      <div id="pending-current" hidden>
+        <p id="pending-name" class="pending-name"></p>
+        <div class="card-actions">
+          <button id="pending-apply" class="primary" type="button">取消收藏并移出</button>
+          <button id="pending-drop" type="button">移出待取消名单</button>
+        </div>
+      </div>
+    </section>
     <nav aria-label="收藏列表">
       <button type="button" data-view="inbox">待复读 <span></span></button>
       <button type="button" data-view="due">待回看 <span></span></button>

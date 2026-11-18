@@ -1,4 +1,4 @@
-import { batchLimit, batchRows, batchItems, restrictedMessage } from "./batch.js";
+import { batchLimit, batchRows, batchItems, pendingUncollectInBatch, restrictedMessage } from "./batch.js";
 import { csvCell } from "./scan.js";
 import { dayAfter, isDue, kinds, localDay, outcomes, source } from "./model.js";
 
@@ -10,6 +10,7 @@ let view = location.hash === "#due" ? "due" : "inbox";
 let items = [];
 let scan = null;
 let siteBlocked = false;
+let pendingUncollect = [];
 let excluded = [];
 let scanning = false;
 let scanBusy = false;
@@ -154,7 +155,39 @@ $("#scan-export").addEventListener("click", () => {
   downloadFile(content, "text/csv;charset=utf-8", `reread-audit-${localDay()}.csv`);
 });
 
+function renderPending() {
+  const pending = pendingUncollectInBatch(pendingUncollect, scan);
+  const current = pending[0];
+  const item = current && items.find(entry => entry.id === current.id);
+  $("#pending-panel").hidden = !pendingUncollect.length;
+  $("#pending-count").textContent = `本批待取消 ${pending.length} 条${pending.length < pendingUncollect.length
+    ? `，其他批次 ${pendingUncollect.length - pending.length} 条` : ""}`;
+  $("#pending-current").hidden = !current;
+  $("#pending-name").textContent = item ? itemTitle(item) : "这条笔记已不在复读列表，可移出待取消名单。";
+  $("#pending-apply").disabled = !item || siteBlocked || Boolean(removing.size);
+  $("#pending-apply").textContent = current && removing.has(current.id) ? "正在取消…" : "取消收藏并移出";
+  $("#pending-drop").disabled = Boolean(current && removing.has(current.id));
+}
+
+$("#pending-apply").addEventListener("click", () => {
+  const current = pendingUncollectInBatch(pendingUncollect, scan)[0];
+  const item = current && items.find(entry => entry.id === current.id);
+  if (item && !siteBlocked && !removing.size) removeFavorite(item, true);
+});
+
+$("#pending-drop").addEventListener("click", async () => {
+  const current = pendingUncollectInBatch(pendingUncollect, scan)[0];
+  if (!current) return;
+  try {
+    await commit({ op: "uncollect-drop", id: current.id });
+    showNotice("已移出待取消名单。");
+  } catch (error) {
+    showNotice(error.message);
+  }
+});
+
 function render() {
+  renderPending();
   const active = batchItems(items, scan);
   const groups = {
     inbox: active.filter(item => item.kind === "inbox" && item.status === "open"),
@@ -203,13 +236,13 @@ function itemTitle(item) {
   return item.title || "小红书帖子";
 }
 
-async function removeFavorite(item) {
+async function removeFavorite(item, fromQueue = false) {
   if (removing.has(item.id)) return;
   removing.add(item.id);
   render();
   showNotice("正在检查这条笔记在小红书上的收藏状态…");
   try {
-    const { outcome } = await commit({ op: "uncollect", id: item.id });
+    const { outcome } = await commit({ op: fromQueue ? "uncollect-next" : "uncollect", id: item.id });
     showNotice(outcome === "already-removed"
       ? "原帖当前未收藏，已移出复读。"
       : "已在小红书取消收藏，并移出复读。");
@@ -401,11 +434,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
     scan = changes.scan.newValue || null;
   }
   if (changes.siteBlocked) siteBlocked = Boolean(changes.siteBlocked.newValue);
+  if (changes.pendingUncollect) pendingUncollect = changes.pendingUncollect.newValue || [];
   if (changes.scan || changes.siteBlocked) drawScan();
-  if (changes.items || changes.scan || changes.siteBlocked) render();
+  if (changes.items || changes.scan || changes.siteBlocked || changes.pendingUncollect) render();
 });
 window.addEventListener("focus", render);
-({ items = [], excluded = [], scan = null, siteBlocked = false } =
-  await chrome.storage.local.get(["items", "excluded", "scan", "siteBlocked"]));
+({ items = [], excluded = [], scan = null, siteBlocked = false, pendingUncollect = [] } =
+  await chrome.storage.local.get(["items", "excluded", "scan", "siteBlocked", "pendingUncollect"]));
 render();
 drawScan();

@@ -15,6 +15,11 @@ export function batchItems(items, scan) {
   return items.filter(item => ids.has(item.id));
 }
 
+export function pendingUncollectInBatch(pending, scan) {
+  const ids = batchIds(scan);
+  return pending.filter(entry => ids.has(entry.id));
+}
+
 // This function is also passed directly to Chrome's script injector.
 export function siteRestricted() {
   const body = document.body?.textContent || "";

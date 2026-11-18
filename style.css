@@ -72,3 +72,5 @@ textarea { resize: vertical; }
 #page-position { font-size: 12px; color: var(--muted); }
 
 #open-cleanup { margin-bottom: 9px; }
+
+.pending-name { margin: .75rem 0 .5rem; font-weight: 600; overflow-wrap: anywhere; }

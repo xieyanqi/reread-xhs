@@ -85,20 +85,23 @@ function article(item, reason) {
 
 function drawConfirmation() {
   const picked = candidates.filter(({ item }) => confirmed.has(item.id));
-  const unavailable = siteBlocked || picked.length > 1 || picked.some(({ item }) => !canUncollect(item));
+  const invalidLink = picked.some(({ item }) => !canUncollect(item));
+  const unavailable = siteBlocked || picked.length > 1 || invalidLink;
+  $("#queue-mode").disabled = invalidLink;
   $("#unavailable").textContent = siteBlocked ? restrictedMessage : picked.length > 1
-    ? "批量操作只移出拾读。取消小红书收藏需要逐条确认。"
-    : "这条只有分享短链，请打开原帖后手动处理小红书收藏。";
+    ? "多条笔记可以加入待取消名单，再在侧栏逐条处理。"
+    : "名单中有分享短链。请取消勾选这些条目，或选择只移出拾读。";
   $("#confirm-summary").textContent = `已选 ${picked.length} 条。可在这份名单里再取消勾选。`;
   $("#site-mode").disabled = unavailable;
   $("#unavailable").hidden = !unavailable;
-  if (unavailable && $("#site-mode").checked) {
+  if ((unavailable && $("#site-mode").checked) || (invalidLink && $("#queue-mode").checked)) {
     $('#confirm-form input[value="local"]').checked = true;
   }
   const mode = new FormData($("#confirm-form")).get("mode");
   const submit = $("#confirm-run");
   submit.disabled = !picked.length;
-  submit.textContent = mode === "site" ? `确认取消收藏 ${picked.length} 条` : `确认移出拾读 ${picked.length} 条`;
+  submit.textContent = mode === "queue" ? `将 ${picked.length} 条加入待取消` :
+    mode === "site" ? `确认取消收藏 ${picked.length} 条` : `确认移出拾读 ${picked.length} 条`;
 }
 
 function openReview(one) {
@@ -323,7 +326,9 @@ $("#confirm-form").addEventListener("submit", async event => {
   if (running) return;
   const mode = new FormData(event.currentTarget).get("mode");
   const approved = candidates.filter(({ item }) => confirmed.has(item.id));
-  if (!approved.length || (mode === "site" && (siteBlocked || approved.length !== 1 || !canUncollect(approved[0].item)))) return;
+  if (!approved.length ||
+      (mode !== "local" && approved.some(({ item }) => !canUncollect(item))) ||
+      (mode === "site" && (siteBlocked || approved.length !== 1))) return;
   running = true;
   $("#close-review").disabled = true;
   $("#confirm-run").hidden = true;
@@ -331,12 +336,14 @@ $("#confirm-form").addEventListener("submit", async event => {
   for (const box of $("#confirm-list").querySelectorAll("input")) box.disabled = true;
   $("#run-status").textContent = "正在处理…";
   let completed = 0;
+  let added = 0;
   const errors = [];
   try {
-    if (mode === "local") {
-      const result = await send({ op: "cleanup-move",
+    if (mode === "local" || mode === "queue") {
+      const result = await send({ op: mode === "queue" ? "uncollect-enqueue" : "cleanup-move",
         entries: approved.map(({ item, includeProtected }) => ({ id: item.id, includeProtected })) });
-      completed = result.completed;
+      completed = mode === "queue" ? approved.length - result.failed.length : result.completed;
+      added = result.added || 0;
       const failed = new Set(result.failed);
       for (const { item } of approved) {
         if (failed.has(item.id)) errors.push(`${name(item)}：状态有变化，请重新核对。`);
@@ -354,7 +361,9 @@ $("#confirm-form").addEventListener("submit", async event => {
     running = false;
     $("#close-review").disabled = false;
     $("#confirm-form fieldset").disabled = false;
-    $("#run-status").textContent = `已完成 ${completed} 条，还有 ${approved.length - completed} 条待处理。`;
+    $("#run-status").textContent = mode === "queue"
+      ? `新增 ${added} 条，已在名单中 ${completed - added} 条，未加入 ${approved.length - completed} 条。回侧栏打开「待取消」即可继续。`
+      : `已完成 ${completed} 条，还有 ${approved.length - completed} 条待处理。`;
     $("#failed").replaceChildren(...errors.map(message => textNode("li", message)));
     $("#failed").hidden = !errors.length;
     if (stage === "quick") saveQuick();
