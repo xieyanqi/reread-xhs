@@ -1,13 +1,15 @@
+import { batchItems, restrictedMessage } from "./batch.js";
 import { availableItems, canUncollect, expiryDate, protectedItem, selectRound, topicGroups } from "./cleanup-model.js";
 
 const $ = selector => document.querySelector(selector);
 const selection = new Map();
 const pageSize = 24;
-let stage = "expiry", items = [], preferences = {}, topic = "", page = 0;
+let stage = "expiry", storedItems = [], items = [], scan = null, siteBlocked = false;
+let preferences = {}, topic = "", page = 0;
 let quick = { ids: [], cursor: 0 };
 let candidates = [];
 const confirmed = new Set();
-let running = false, stopAfter = false;
+let running = false;
 const confirm = $("#confirm");
 const words = {
   expiry: ["先看已过期的消息", "这里集中看标题写明了完整日期的活动、优惠和报名。打开原帖再判断它还有没有参考价值。"],
@@ -83,7 +85,10 @@ function article(item, reason) {
 
 function drawConfirmation() {
   const picked = candidates.filter(({ item }) => confirmed.has(item.id));
-  const unavailable = picked.some(({ item }) => !canUncollect(item));
+  const unavailable = siteBlocked || picked.length > 1 || picked.some(({ item }) => !canUncollect(item));
+  $("#unavailable").textContent = siteBlocked ? restrictedMessage : picked.length > 1
+    ? "批量操作只移出拾读。取消小红书收藏需要逐条确认。"
+    : "这条只有分享短链，请打开原帖后手动处理小红书收藏。";
   $("#confirm-summary").textContent = `已选 ${picked.length} 条。可在这份名单里再取消勾选。`;
   $("#site-mode").disabled = unavailable;
   $("#unavailable").hidden = !unavailable;
@@ -311,7 +316,6 @@ confirm.addEventListener("close", () => {
   if (stage === "quick") saveQuick();
   draw();
 });
-$("#cancel-run").addEventListener("click", () => { stopAfter = true; });
 confirm.addEventListener("cancel", event => { if (running) event.preventDefault(); });
 
 $("#confirm-form").addEventListener("submit", async event => {
@@ -319,12 +323,10 @@ $("#confirm-form").addEventListener("submit", async event => {
   if (running) return;
   const mode = new FormData(event.currentTarget).get("mode");
   const approved = candidates.filter(({ item }) => confirmed.has(item.id));
-  if (!approved.length || (mode === "site" && approved.some(({ item }) => !canUncollect(item)))) return;
+  if (!approved.length || (mode === "site" && (siteBlocked || approved.length !== 1 || !canUncollect(approved[0].item)))) return;
   running = true;
-  stopAfter = false;
   $("#close-review").disabled = true;
   $("#confirm-run").hidden = true;
-  $("#cancel-run").hidden = mode !== "site";
   $("#confirm-form fieldset").disabled = true;
   for (const box of $("#confirm-list").querySelectorAll("input")) box.disabled = true;
   $("#run-status").textContent = "正在处理…";
@@ -341,18 +343,10 @@ $("#confirm-form").addEventListener("submit", async event => {
         else selection.delete(item.id);
       }
     } else {
-      for (const { item, includeProtected } of approved) {
-        if (stopAfter) break;
-        $("#run-status").textContent = `正在处理 ${completed + errors.length + 1} / ${approved.length} 条`;
-        try {
-          await send({ op: "uncollect", id: item.id, rejectIfProtected: !includeProtected });
-          selection.delete(item.id);
-          completed++;
-        } catch (error) {
-          errors.push(`${name(item)}：${error.message}`);
-          break;
-        }
-      }
+      const [{ item, includeProtected }] = approved;
+      await send({ op: "uncollect", id: item.id, rejectIfProtected: !includeProtected });
+      selection.delete(item.id);
+      completed = 1;
     }
   } catch (error) {
     errors.push(error.message);
@@ -360,7 +354,6 @@ $("#confirm-form").addEventListener("submit", async event => {
     running = false;
     $("#close-review").disabled = false;
     $("#confirm-form fieldset").disabled = false;
-    $("#cancel-run").hidden = true;
     $("#run-status").textContent = `已完成 ${completed} 条，还有 ${approved.length - completed} 条待处理。`;
     $("#failed").replaceChildren(...errors.map(message => textNode("li", message)));
     $("#failed").hidden = !errors.length;
@@ -371,13 +364,23 @@ $("#confirm-form").addEventListener("submit", async event => {
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
-  if (changes.items) items = changes.items.newValue || [];
+  if (changes.items) storedItems = changes.items.newValue || [];
+  if (changes.scan) scan = changes.scan.newValue || null;
+  if (changes.siteBlocked) siteBlocked = Boolean(changes.siteBlocked.newValue);
   if (changes.cleanupPreferences) preferences = changes.cleanupPreferences.newValue || {};
-  if (changes.items || changes.cleanupPreferences) draw();
+  if (changes.items || changes.scan) {
+    items = batchItems(storedItems, scan);
+    const active = new Set(items.map(item => item.id));
+    for (const id of selection.keys()) if (!active.has(id)) selection.delete(id);
+    if (confirm.open && !running && candidates.some(({ item }) => !active.has(item.id))) confirm.close();
+  }
+  if (changes.siteBlocked && confirm.open && !running) drawConfirmation();
+  if (changes.items || changes.scan || changes.cleanupPreferences) draw();
 });
 const savedQuick = JSON.parse(sessionStorage.getItem("cleanup-quick") || "null");
-const data = await chrome.storage.local.get(["items", "cleanupPreferences"]);
-({ items = [], cleanupPreferences: preferences = {} } = data);
+const data = await chrome.storage.local.get(["items", "cleanupPreferences", "scan", "siteBlocked"]);
+({ items: storedItems = [], cleanupPreferences: preferences = {}, scan = null, siteBlocked = false } = data);
+items = batchItems(storedItems, scan);
 if (savedQuick) {
   quick = { ids: savedQuick.ids, cursor: savedQuick.cursor };
   const open = new Set(items.filter(item => item.status === "open").map(item => item.id));

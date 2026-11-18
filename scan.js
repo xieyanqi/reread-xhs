@@ -18,11 +18,13 @@ export function isCollectionUrl(raw) {
   return Boolean(collectionProfile(raw));
 }
 
-export async function scanPage(expectedUrl, offset, firstId, previousId) {
+export async function scanPage(expectedUrl, offset, firstId, previousId, limit = 150) {
   const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
   const expectedProfile = new URL(expectedUrl).pathname.match(/^\/user\/profile\/([\w-]+)\/?$/)?.[1];
 
   function contextStatus() {
+    const body = document.body?.textContent || "";
+    if (/安全限制|检测到异常访问/.test(body) && /300013|本次访问已被限制/.test(body)) return "restricted";
     const url = new URL(location.href);
     const currentProfile = url.pathname.match(/^\/user\/profile\/([\w-]+)\/?$/)?.[1];
     if (url.protocol !== "https:" || !["xiaohongshu.com", "www.xiaohongshu.com", "m.xiaohongshu.com"].includes(url.hostname)) return "tab-changed";
@@ -104,7 +106,7 @@ export async function scanPage(expectedUrl, offset, firstId, previousId) {
       try {
         const loading = Promise.resolve().then(() => store.fetchNotes()).then(() => true, () => false);
         const finished = await Promise.race([loading, new Promise(resolve => { timer = setTimeout(() => resolve(false), 12000); })]);
-        if (!finished) return { stop: "request-stopped", total };
+        if (!finished) return { stop: contextStatus() || "request-stopped", total };
       } finally {
         clearTimeout(timer);
       }
@@ -136,7 +138,7 @@ export async function scanPage(expectedUrl, offset, firstId, previousId) {
     return { stop, total, loaded: list.length };
   }
 
-  const end = Math.min(list.length, offset + 150);
+  const end = Math.min(list.length, offset + limit);
   const rows = list.slice(offset, end).map(row);
   const atEnd = end === list.length;
   let stop = "";

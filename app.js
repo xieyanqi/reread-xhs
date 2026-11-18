@@ -1,3 +1,4 @@
+import { batchLimit, batchRows, batchItems, restrictedMessage } from "./batch.js";
 import { csvCell } from "./scan.js";
 import { dayAfter, isDue, kinds, localDay, outcomes, source } from "./model.js";
 
@@ -8,6 +9,7 @@ const dashboard = location.hash.length > 0;
 let view = location.hash === "#due" ? "due" : "inbox";
 let items = [];
 let scan = null;
+let siteBlocked = false;
 let excluded = [];
 let scanning = false;
 let scanBusy = false;
@@ -26,35 +28,6 @@ async function commit(input) {
   return result;
 }
 
-async function importEntries(entries) {
-  const { added, matched } = await commit({ op: "add", entries });
-  if (!matched) {
-    showNotice("未识别到小红书帖子链接。");
-    return false;
-  }
-  view = "inbox";
-  listPage = 0;
-  render();
-  showNotice(`识别到 ${matched} 条，新增 ${added} 条${matched > added ? `，已收录 ${matched - added} 条` : ""}。`);
-  return true;
-}
-
-$("#paste-form").addEventListener("submit", async event => {
-  event.preventDefault();
-  const field = $("#links");
-  const entries = (field.value.match(/https?:\/\/[^\s\u3000<>"'，。；！？、）】》]+/gi) || [])
-    .map(url => ({ url: url.replace(/[),.;]+$/, "") }));
-  const button = event.currentTarget.querySelector("button");
-  button.disabled = true;
-  try {
-    if (await importEntries(entries)) field.value = "";
-  } catch (error) {
-    showNotice(error.message);
-  } finally {
-    button.disabled = false;
-  }
-});
-
 const scanStops = {
   "unavailable": "暂时读不到小红书的分页状态。",
   "waiting": "小红书还在加载，请稍后继续。",
@@ -67,47 +40,60 @@ const scanStops = {
   "needs-site-access": "小红书显示登录或验证页面。请按网站提示处理，再回收藏页继续。",
   "script-error": "页面打开了，但 Chrome 未能运行收藏扫描。请刷新收藏页后重试。",
   "list-changed": "小红书列表顺序已变化，请从头重扫以重新核对。",
-  "restarted": "扫描已在另一个窗口重开。"
+  "restarted": "扫描已在另一个窗口重开。",
+  "batch-end": "已到本批上限。整理完后，可扫描下一批。"
 };
 
 function drawScan() {
-  const resume = $("#scan-resume");
-  $("#scan-start").disabled = scanBusy;
-  $("#scan-resume").disabled = scanBusy;
+  const rows = batchRows(scan);
+  const start = scan?.batchStart ?? 0;
+  const cachedNext = Boolean(scan && start + batchLimit < scan.rows.length);
+  const canReadNext = Boolean(scan && rows.length === batchLimit && scan.stop !== "site-end");
+  $("#scan-start").disabled = scanBusy || siteBlocked;
+  $("#scan-start").textContent = scan ? "从头重扫" : "从头扫描第一批";
+  $("#scan-next").hidden = dashboard || scanning || !(cachedNext || (!siteBlocked && canReadNext));
+  $("#scan-next").disabled = scanBusy;
+  $("#scan-next").textContent = cachedNext ? "打开下一批已扫笔记" : "扫描下一批";
+  $("#scan-resume").disabled = scanBusy || siteBlocked;
+  $("#scan-resume").hidden = dashboard || !scan || scanning || rows.length >= batchLimit ||
+    ["site-end", "tab-closed", "list-changed"].includes(scan.stop);
   $("#scan-pause").hidden = !scanning;
-  $("#scan-export").hidden = !scan?.rows.length;
-  resume.hidden = dashboard || !scan || scanning || ["site-end", "tab-closed", "list-changed"].includes(scan.stop);
+  $("#scan-export").hidden = !rows.length;
+  $("#site-block").textContent = siteBlocked ? restrictedMessage : "";
+  $("#site-block").hidden = !siteBlocked;
+  $("#site-resume").hidden = dashboard || !siteBlocked;
   const progress = $("#scan-progress");
-  progress.hidden = !scan?.expected;
-  progress.max = scan?.expected || 1;
-  progress.value = Math.min(scan?.unique || 0, progress.max);
+  progress.hidden = !scan;
+  progress.max = batchLimit;
+  progress.value = rows.length;
   if (!scan) return;
   const expected = scan.expected == null ? "网站总数暂未识别" : `小红书显示 ${scan.expected} 条`;
   const gap = scan.expected - scan.unique;
   const difference = scan.expected == null ? "" : gap < 0 ? ` · 多 ${-gap} 条` : ` · 差 ${gap} 条`;
   const clean = scan.expected === scan.lastTotal && scan.unique === scan.expected && scan.rows.length === scan.unique;
-  const status = scanning
+  const status = siteBlocked ? "访问已暂停。可以继续整理已保存的本批笔记。" : scanning
     ? (replayLoaded == null ? "正在按小红书列表顺序扫描…" : `正在恢复页面进度（已重新加载 ${replayLoaded} / ${scan.rows.length} 行）…`)
     : scan.stop === "site-end"
     ? (clean ? "已到末页，去重后的数量与网站总数一致。" : "网站已返回末页，仍有数量差异或总数待核对。")
-    : (scanStops[scan.stop] || "已暂停，可以继续。");
+    : (rows.length === batchLimit ? scanStops["batch-end"] : scanStops[scan.stop] || "已暂停，可以继续。");
   const extra = scan.lastTotal !== scan.expected ? `
 扫描期间网站总数变为 ${scan.lastTotal} 条。` : "";
-  $("#scan-summary").textContent = `从第 1 条开始 · 已读 ${scan.rows.length} 行 · 确认 ${scan.unique} 条不同笔记
+  $("#scan-summary").textContent = `第 ${Math.floor(start / batchLimit) + 1} 批 · 本批 ${rows.length} / ${batchLimit} 条 · 累计确认 ${scan.unique} 条不同笔记
 ${expected}${difference}。
 ${status}${extra}`;
 }
 
-async function runScan(start) {
+async function runScan(op) {
   if (scanBusy) return;
   scanBusy = scanning = true;
   replayLoaded = null;
   drawScan();
   try {
-    if (start) {
+    if (op) {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (tab?.id == null) throw new Error("请先在浏览器打开小红书收藏页。");
-      await commit({ op: "scan-start", tabId: tab.id });
+      const result = await commit({ op, tabId: tab.id });
+      if (result.offline) return;
     }
     let loadingChecks = 0;
     while (scanning) {
@@ -136,33 +122,44 @@ function downloadFile(content, mime, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-$("#scan-start").addEventListener("click", () => runScan(true));
-$("#scan-resume").addEventListener("click", () => runScan(false));
+$("#scan-start").addEventListener("click", () => runScan("scan-start"));
+$("#scan-next").addEventListener("click", () => runScan("scan-next"));
+$("#scan-resume").addEventListener("click", () => runScan());
+$("#site-resume").addEventListener("click", async () => {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    await commit({ op: "site-resume", tabId: tab?.id });
+    showNotice("收藏页可访问，可以手动继续。");
+  } catch (error) {
+    showNotice(error.message);
+  }
+});
 $("#scan-pause").addEventListener("click", () => {
   scanning = false;
   drawScan();
 });
 $("#scan-export").addEventListener("click", () => {
-  if (!scan?.rows.length) return;
+  if (!batchRows(scan).length) return;
   const byId = new Map(items.map(item => [item.id, item]));
   const skipped = new Set(excluded);
   const rows = [["网站返回顺序", "标题", "帖子 ID", "原帖", "核对结果"]];
-  for (const [index, row] of scan.rows.entries()) {
+  for (const [index, row] of batchRows(scan).entries()) {
     const item = byId.get(row.id);
     const status = !row.id ? "无法识别帖子 ID" : row.duplicate ? "网站返回重复项" :
       skipped.has(row.id) ? "已移出复读" : item ? "已收录" : "未收录";
     const link = row.id ? (item?.url || `https://www.xiaohongshu.com/explore/${row.id}`) : "";
-    rows.push([index + 1, row.title, row.id, link, status]);
+    rows.push([(scan.batchStart ?? 0) + index + 1, row.title, row.id, link, status]);
   }
   const content = "\ufeff" + rows.map(fields => fields.map(csvCell).join(",")).join("\r\n");
   downloadFile(content, "text/csv;charset=utf-8", `reread-audit-${localDay()}.csv`);
 });
 
 function render() {
+  const active = batchItems(items, scan);
   const groups = {
-    inbox: items.filter(item => item.kind === "inbox"),
-    due: items.filter(item => isDue(item)).sort((a, b) => a.due.localeCompare(b.due)),
-    all: items
+    inbox: active.filter(item => item.kind === "inbox" && item.status === "open"),
+    due: active.filter(item => isDue(item)).sort((a, b) => a.due.localeCompare(b.due)),
+    all: active
   };
   for (const button of document.querySelectorAll("[data-view]")) {
     button.setAttribute("aria-pressed", String(button.dataset.view === view));
@@ -189,7 +186,7 @@ function render() {
   const title = document.createElement("h2");
   const hint = document.createElement("p");
   const copy = {
-    inbox: ["待复读列表是空的", "打开小红书收藏页，点击「从头扫描收藏」。"],
+    inbox: ["待复读列表是空的", "打开小红书收藏页，点击「从头扫描第一批」。"],
     due: ["今天没有到期条目", "用「全部」查看已经安排的笔记和行动，也可以提前复盘。"],
     all: ["还没有收录的帖子", "导入一篇最近收藏的帖子，试着写下它能帮你做什么。"]
   };
@@ -197,7 +194,7 @@ function render() {
   if (search) {
     title.textContent = "没有匹配的收藏";
     hint.textContent = "可以换一个关键词，或切到「全部」搜索。";
-  } else if (dashboard && view === "inbox") hint.textContent = "在小红书收藏页打开拾读并开始扫描，或在这里粘贴分享链接。";
+  } else if (dashboard && view === "inbox") hint.textContent = "在小红书收藏页打开拾读并开始扫描。";
   empty.append(title, hint);
   list.replaceChildren(empty);
 }
@@ -256,8 +253,8 @@ function makeCard(item) {
   check.addEventListener("click", () => openCheck(item));
   const uncollect = card.querySelector(".uncollect");
   uncollect.hidden = item.favoriteRemoved || !source(item.url) || item.id.startsWith("share:");
-  uncollect.disabled = removing.has(item.id);
-  uncollect.textContent = uncollect.disabled ? "正在取消…" : "取消收藏并移出";
+  uncollect.disabled = removing.has(item.id) || siteBlocked;
+  uncollect.textContent = removing.has(item.id) ? "正在取消…" : "取消收藏并移出";
   uncollect.addEventListener("click", () => removeFavorite(item));
   const history = card.querySelector(".history");
   history.hidden = !item.history.length;
@@ -365,7 +362,7 @@ $("#next-page").addEventListener("click", () => { listPage++; render(); $("#list
 
 function markdown() {
   const escape = text => text.replace(/[\\`*_{}\[\]()#!<>]/g, "\\$&");
-  const blocks = items.map(item => [
+  const blocks = batchItems(items, scan).map(item => [
     `## ${escape(itemTitle(item).replace(/\s+/g, " "))}`,
     `[原帖](<${item.url}>) · ${kinds[item.kind]}${item.due ? ` · 回看 ${item.due}` : ""}`,
     item.body,
@@ -375,7 +372,7 @@ function markdown() {
 }
 
 $("#export").addEventListener("click", () => {
-  if (!items.length) {
+  if (!batchItems(items, scan).length) {
     showNotice("收录帖子后就可以导出。");
     return;
   }
@@ -396,17 +393,19 @@ $("#scan-start").hidden = dashboard;
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
-  if (changes.items) {
-    items = changes.items.newValue || [];
-    render();
-  }
+  if (changes.items) items = changes.items.newValue || [];
   if (changes.excluded) excluded = changes.excluded.newValue || [];
   if (changes.scan) {
+    if (changes.scan.oldValue?.batchStart !== changes.scan.newValue?.batchStart ||
+        changes.scan.oldValue?.id !== changes.scan.newValue?.id) listPage = 0;
     scan = changes.scan.newValue || null;
-    drawScan();
   }
+  if (changes.siteBlocked) siteBlocked = Boolean(changes.siteBlocked.newValue);
+  if (changes.scan || changes.siteBlocked) drawScan();
+  if (changes.items || changes.scan || changes.siteBlocked) render();
 });
 window.addEventListener("focus", render);
-({ items = [], excluded = [], scan = null } = await chrome.storage.local.get(["items", "excluded", "scan"]));
+({ items = [], excluded = [], scan = null, siteBlocked = false } =
+  await chrome.storage.local.get(["items", "excluded", "scan", "siteBlocked"]));
 render();
 drawScan();

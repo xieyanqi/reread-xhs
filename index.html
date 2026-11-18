@@ -16,27 +16,22 @@
     <section class="scan" aria-labelledby="scan-title">
       <h2 id="scan-title">收藏对账</h2>
       <div class="card-actions">
-        <button id="scan-start" class="primary" type="button">从头扫描收藏</button>
+        <button id="scan-start" class="primary" type="button">从头扫描第一批</button>
+        <button id="scan-next" class="primary" type="button" hidden>扫描下一批</button>
         <button id="scan-resume" type="button" hidden>继续扫描</button>
         <button id="scan-pause" type="button" hidden>暂停扫描</button>
         <button id="scan-export" type="button" hidden>导出对账 CSV</button>
       </div>
       <p id="scan-summary" class="notice" role="status"></p>
       <progress id="scan-progress" hidden></progress>
-      <details class="paste-links">
-        <summary>粘贴链接</summary>
-        <form id="paste-form">
-          <label for="links">小红书帖子链接或分享文本，可粘贴多条</label>
-          <textarea id="links" required rows="3" placeholder="https://www.xiaohongshu.com/explore/…"></textarea>
-          <button type="submit">加入待复读</button>
-        </form>
-      </details>
+      <p id="site-block" class="notice" role="status" hidden></p>
+      <button id="site-resume" type="button" hidden>收藏页恢复后重新检查</button>
       <p id="notice" class="notice" role="status"></p>
     </section>
     <nav aria-label="收藏列表">
       <button type="button" data-view="inbox">待复读 <span></span></button>
       <button type="button" data-view="due">待回看 <span></span></button>
-      <button type="button" data-view="all">全部 <span></span></button>
+      <button type="button" data-view="all">本批全部 <span></span></button>
     </nav>
     <div class="card-actions"><button id="open-cleanup" type="button">整理收藏 ↗</button></div>
     <input id="item-search" type="search" aria-label="搜索收藏" placeholder="搜索标题、笔记或帖子 ID">

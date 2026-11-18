@@ -1,3 +1,4 @@
+import { restrictedMessage } from "./batch.js";
 import { source, xhsHosts, xhsNotePath } from "./model.js";
 
 const failures = {
@@ -64,7 +65,13 @@ function alternativeUrls(original) {
   return [...new Set([alternate.href, canonical.href])].filter(link => link !== original.url);
 }
 
+function blocked() {
+  return Object.assign(new Error(restrictedMessage), { code: "restricted" });
+}
+
 function readOriginalLocation(id, hosts, notePattern) {
+  const body = document.body?.textContent || "";
+  if (/安全限制|检测到异常访问/.test(body) && /300013|本次访问已被限制/.test(body)) return "restricted";
   const page = new URL(location.href);
   return page.protocol === "https:" && hosts.includes(page.hostname) &&
     new RegExp(notePattern, "i").exec(page.pathname)?.[1]?.toLowerCase() === id &&
@@ -88,7 +95,8 @@ async function openNote(browser, original, activateExisting) {
         func: readOriginalLocation,
         args: [original.id, xhsHosts, xhsNotePath.source]
       });
-      if (frame?.result) return { tab, existing };
+      if (frame?.result === "restricted") throw blocked();
+      if (frame?.result === true) return { tab, existing };
       sawDocument = true;
       const { url } = await browser.tabs.get(tab.id);
       if (url && !xhsHosts.includes(new URL(url).hostname)) throw new Error("小红书跳转了页面，请在原帖标签页检查登录或访问状态。");
@@ -128,6 +136,7 @@ export async function uncollect(browser, item) {
         func: readFavoriteControl,
         args: [item.id, xhsHosts, xhsNotePath.source, click]
       });
+      if (frame?.result === "restricted") throw blocked();
       return frame?.result;
     } catch (error) {
       if (/error page|net::ERR_|chrome-error/i.test(error.message)) {
@@ -165,6 +174,11 @@ export async function readFavoriteControl(id, hosts, notePattern, click) {
   const visible = node => node.getClientRects().length && !node.closest('[hidden], [aria-hidden="true"]');
   const tag = node => (node.textContent || "").trim();
 
+  function restriction() {
+    const body = document.body?.textContent || "";
+    return /安全限制|检测到异常访问/.test(body) && /300013|本次访问已被限制/.test(body);
+  }
+
   function correctNote() {
     const page = new URL(location.href);
     return page.protocol === "https:" && hosts.includes(page.hostname) &&
@@ -190,6 +204,7 @@ export async function readFavoriteControl(id, hosts, notePattern, click) {
 
   let lastState = "", stable = 0;
   for (let attempt = 0; attempt < 22; attempt++) {
+    if (restriction()) return "restricted";
     if (!correctNote()) return "unavailable";
     const login = Array.from(document.querySelectorAll('.login-modal, .login-container .login-btn, header button, .side-bar button'))
       .some(node => visible(node) && (node.matches(".login-modal") || /^(登录|登入|sign in|log in)$/i.test(tag(node))));
@@ -206,6 +221,7 @@ export async function readFavoriteControl(id, hosts, notePattern, click) {
       let confirmed = false;
       for (let tick = 0; tick < 18; tick++) {
         await sleep(200);
+        if (restriction()) return "restricted";
         if (!correctNote()) return "unavailable";
         const dialogs = Array.from(document.querySelectorAll('[role="dialog"], .reds-modal, .el-dialog')).filter(visible);
         for (const dialog of dialogs) {
