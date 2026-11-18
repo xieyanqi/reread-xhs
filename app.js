@@ -1,3 +1,4 @@
+import { processPendingBatch } from "./pending-batch.js";
 import { batchLimit, batchRows, batchItems, pendingUncollectInBatch, restrictedMessage } from "./batch.js";
 import { csvCell } from "./scan.js";
 import { dayAfter, isDue, kinds, localDay, outcomes, source } from "./model.js";
@@ -11,6 +12,9 @@ let items = [];
 let scan = null;
 let siteBlocked = false;
 let pendingUncollect = [];
+let processingBatch = false;
+let stopPendingBatch = false;
+let pendingBatchMessage = "";
 let excluded = [];
 let scanning = false;
 let scanBusy = false;
@@ -50,12 +54,12 @@ function drawScan() {
   const start = scan?.batchStart ?? 0;
   const cachedNext = Boolean(scan && start + batchLimit < scan.rows.length);
   const canReadNext = Boolean(scan && rows.length === batchLimit && scan.stop !== "site-end");
-  $("#scan-start").disabled = scanBusy || siteBlocked;
+  $("#scan-start").disabled = scanBusy || siteBlocked || processingBatch;
   $("#scan-start").textContent = scan ? "从头重扫" : "从头扫描第一批";
   $("#scan-next").hidden = dashboard || scanning || !(cachedNext || (!siteBlocked && canReadNext));
-  $("#scan-next").disabled = scanBusy;
+  $("#scan-next").disabled = scanBusy || processingBatch;
   $("#scan-next").textContent = cachedNext ? "打开下一批已扫笔记" : "扫描下一批";
-  $("#scan-resume").disabled = scanBusy || siteBlocked;
+  $("#scan-resume").disabled = scanBusy || siteBlocked || processingBatch;
   $("#scan-resume").hidden = dashboard || !scan || scanning || rows.length >= batchLimit ||
     ["site-end", "tab-closed", "list-changed"].includes(scan.stop);
   $("#scan-pause").hidden = !scanning;
@@ -85,7 +89,7 @@ ${status}${extra}`;
 }
 
 async function runScan(op) {
-  if (scanBusy) return;
+  if (scanBusy || processingBatch) return;
   scanBusy = scanning = true;
   replayLoaded = null;
   drawScan();
@@ -159,31 +163,91 @@ function renderPending() {
   const pending = pendingUncollectInBatch(pendingUncollect, scan);
   const current = pending[0];
   const item = current && items.find(entry => entry.id === current.id);
-  $("#pending-panel").hidden = !pendingUncollect.length;
+  $("#pending-panel").hidden = !pendingUncollect.length && !pendingBatchMessage;
+  $("#pending-batch-status").textContent = pendingBatchMessage;
+  $("#pending-batch-start").hidden = !pending.length || processingBatch;
+  $("#pending-batch-start").disabled = siteBlocked || scanBusy || Boolean(removing.size);
+  $("#pending-batch-start").textContent = `批量取消本批 ${pending.length} 条收藏`;
+  $("#pending-batch-stop").hidden = !processingBatch;
+  $("#pending-batch-stop").disabled = stopPendingBatch;
   $("#pending-count").textContent = `本批待取消 ${pending.length} 条${pending.length < pendingUncollect.length
     ? `，其他批次 ${pendingUncollect.length - pending.length} 条` : ""}`;
   $("#pending-current").hidden = !current;
   $("#pending-name").textContent = item ? itemTitle(item) : "这条笔记已不在复读列表，可移出待取消名单。";
-  $("#pending-apply").disabled = !item || siteBlocked || Boolean(removing.size);
+  $("#pending-apply").disabled = !item || siteBlocked || processingBatch || Boolean(removing.size);
   $("#pending-apply").textContent = current && removing.has(current.id) ? "正在取消…" : "取消收藏并移出";
-  $("#pending-drop").disabled = Boolean(current && removing.has(current.id));
+  $("#pending-drop").disabled = processingBatch || Boolean(current && removing.has(current.id));
 }
 
 $("#pending-apply").addEventListener("click", () => {
   const current = pendingUncollectInBatch(pendingUncollect, scan)[0];
   const item = current && items.find(entry => entry.id === current.id);
-  if (item && !siteBlocked && !removing.size) removeFavorite(item, true);
+  if (item && !siteBlocked && !processingBatch && !removing.size) removeFavorite(item, true);
 });
 
 $("#pending-drop").addEventListener("click", async () => {
   const current = pendingUncollectInBatch(pendingUncollect, scan)[0];
-  if (!current) return;
+  if (!current || processingBatch) return;
   try {
     await commit({ op: "uncollect-drop", id: current.id });
     showNotice("已移出待取消名单。");
   } catch (error) {
     showNotice(error.message);
   }
+});
+
+function reportPendingBatch({ total, completed, remainingMs }) {
+  const estimate = remainingMs === null ? "完成首条后显示预计时间"
+    : remainingMs < 60000 ? "预计剩余不到 1 分钟"
+    : `预计剩余约 ${Math.ceil(remainingMs / 60000)} 分钟`;
+  pendingBatchMessage = stopPendingBatch ? "当前这条处理完后会停止。" :
+    `正在批量取消 ${total} 条收藏，已处理 ${completed} 条。${estimate}。请留意侧栏状态。`;
+  renderPending();
+}
+
+$("#pending-batch-start").addEventListener("click", async () => {
+  if (processingBatch || siteBlocked || scanBusy || removing.size) return;
+  const ids = pendingUncollectInBatch(pendingUncollect, scan).map(entry => entry.id);
+  if (!ids.length) return;
+  const initialScan = scan;
+  processingBatch = true;
+  stopPendingBatch = false;
+  reportPendingBatch({ total: ids.length, completed: 0, remainingMs: null });
+  drawScan();
+  render();
+  try {
+    const result = await processPendingBatch(ids, {
+      canContinue: () => !stopPendingBatch,
+      onProgress: reportPendingBatch,
+      process: async id => {
+        const current = await chrome.storage.local.get(["scan", "siteBlocked", "pendingUncollect"]);
+        if (stopPendingBatch) return false;
+        if (current.siteBlocked) throw new Error(restrictedMessage);
+        if (current.scan?.id !== initialScan?.id || current.scan?.batchStart !== initialScan?.batchStart) {
+          throw new Error("当前收藏批次已切换。");
+        }
+        const next = pendingUncollectInBatch(current.pendingUncollect || [], current.scan)[0];
+        if (next?.id !== id) throw new Error("待取消名单已变化，请重新查看。");
+        await commit({ op: "uncollect-next", id });
+        return true;
+      }
+    });
+    const remaining = result.total - result.completed;
+    pendingBatchMessage = result.stopped
+      ? `已停止。本次完成 ${result.completed} 条，尚有 ${remaining} 条原计划未处理。${result.error || ""}`
+      : `本次已处理 ${result.completed} 条收藏。`;
+  } finally {
+    processingBatch = false;
+    stopPendingBatch = false;
+    drawScan();
+    render();
+  }
+});
+
+$("#pending-batch-stop").addEventListener("click", () => {
+  stopPendingBatch = true;
+  pendingBatchMessage = "正在停止，当前这条的结果确认后结束。";
+  renderPending();
 });
 
 function render() {
@@ -237,7 +301,7 @@ function itemTitle(item) {
 }
 
 async function removeFavorite(item, fromQueue = false) {
-  if (removing.has(item.id)) return;
+  if (processingBatch || removing.has(item.id)) return;
   removing.add(item.id);
   render();
   showNotice("正在检查这条笔记在小红书上的收藏状态…");
@@ -286,7 +350,7 @@ function makeCard(item) {
   check.addEventListener("click", () => openCheck(item));
   const uncollect = card.querySelector(".uncollect");
   uncollect.hidden = item.favoriteRemoved || !source(item.url) || item.id.startsWith("share:");
-  uncollect.disabled = removing.has(item.id) || siteBlocked;
+  uncollect.disabled = removing.has(item.id) || siteBlocked || processingBatch;
   uncollect.textContent = removing.has(item.id) ? "正在取消…" : "取消收藏并移出";
   uncollect.addEventListener("click", () => removeFavorite(item));
   const history = card.querySelector(".history");

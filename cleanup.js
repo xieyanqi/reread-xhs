@@ -89,7 +89,7 @@ function drawConfirmation() {
   const unavailable = siteBlocked || picked.length > 1 || invalidLink;
   $("#queue-mode").disabled = invalidLink;
   $("#unavailable").textContent = siteBlocked ? restrictedMessage : picked.length > 1
-    ? "多条笔记可以加入待取消名单，再在侧栏逐条处理。"
+    ? "多条笔记可以加入待取消名单，再回侧栏开始批量取消。"
     : "名单中有分享短链。请取消勾选这些条目，或选择只移出拾读。";
   $("#confirm-summary").textContent = `已选 ${picked.length} 条。可在这份名单里再取消勾选。`;
   $("#site-mode").disabled = unavailable;
